@@ -1,0 +1,256 @@
+---
+title: "Custom operators"
+description: "Create custom anonymization and deanonymization operators to extend Presidio Anonymizer with your own PII transformation logic."
+keywords: ["presidio", "custom operator", "anonymizer", "deanonymizer", "operator"]
+---
+
+Operators define what happens to detected PII. Presidio Anonymizer ships with built-in operators (`replace`, `redact`, `hash`, `mask`, `encrypt`, `keep`) and Deanonymizer ships with `decrypt`. You can add your own.
+
+<Note>
+  For a full overview of built-in operators and how to use them, see [Anonymizer operators](/anonymizer/operators).
+</Note>
+
+## How operators work
+
+Every operator implements the abstract `Operator` class from `presidio_anonymizer.operators`:
+
+```python
+# presidio_anonymizer/operators/operator.py
+class Operator(ABC):
+    @abstractmethod
+    def operate(self, text: str, params: Dict = None) -> str:
+        """Transform the matched PII text. Return the replacement string."""
+        pass
+
+    @abstractmethod
+    def validate(self, params: Dict = None) -> None:
+        """Validate that params contains all required keys and valid values."""
+        pass
+
+    @abstractmethod
+    def operator_name(self) -> str:
+        """Return the operator name (used to select it by name)."""
+        pass
+
+    @abstractmethod
+    def operator_type(self) -> OperatorType:
+        """Return OperatorType.Anonymize or OperatorType.Deanonymize."""
+        pass
+```
+
+`OperatorType.Anonymize` operators are used by `AnonymizerEngine`. `OperatorType.Deanonymize` operators are used by `DeanonymizeEngine`.
+
+---
+
+## Creating a custom anonymizer operator
+
+<Steps>
+  <Step title="Subclass Operator">
+    Import `Operator` and `OperatorType`, then implement all four abstract methods.
+
+    ```python
+    from typing import Dict
+    from presidio_anonymizer.operators import Operator, OperatorType
+
+
+    class PseudonymOperator(Operator):
+        """Replace a PII entity with a deterministic pseudonym."""
+
+        PSEUDONYM_MAP_KEY = "pseudonym_map"
+
+        def operate(self, text: str, params: Dict = None) -> str:
+            """Look up or generate a pseudonym for the given text."""
+            pseudonym_map = params.get(self.PSEUDONYM_MAP_KEY, {})
+            if text not in pseudonym_map:
+                pseudonym_map[text] = f"PERSON_{len(pseudonym_map) + 1}"
+            return pseudonym_map[text]
+
+        def validate(self, params: Dict = None) -> None:
+            """No required parameters for this operator."""
+            pass
+
+        def operator_name(self) -> str:
+            return "pseudonym"
+
+        def operator_type(self) -> OperatorType:
+            return OperatorType.Anonymize
+    ```
+  </Step>
+  <Step title="Register the operator with AnonymizerEngine">
+    Pass the operator class (not an instance) to `add_anonymizer`:
+
+    ```python
+    from presidio_anonymizer import AnonymizerEngine
+
+    engine = AnonymizerEngine()
+    engine.add_anonymizer(PseudonymOperator)
+    ```
+  </Step>
+  <Step title="Use the operator in an anonymization request">
+    Reference your operator by its `operator_name()` in the `operators` dict:
+
+    ```python
+    from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+
+    results = [
+        RecognizerResult(entity_type="PERSON", start=11, end=21, score=0.85),
+    ]
+
+    pseudonym_map = {}
+
+    anonymized = engine.anonymize(
+        text="My name is John Smith",
+        analyzer_results=results,
+        operators={
+            "PERSON": OperatorConfig(
+                "pseudonym",
+                {"pseudonym_map": pseudonym_map},
+            )
+        },
+    )
+    print(anonymized.text)
+    # My name is PERSON_1
+    ```
+  </Step>
+</Steps>
+
+---
+
+## The `params` dictionary
+
+`params` is passed from the `OperatorConfig` at call time. Use it to accept runtime configuration — keys, mappings, salts, format strings, or any other options your operator needs.
+
+Always validate required params in `validate()` to surface configuration errors early:
+
+```python
+from presidio_anonymizer.entities import InvalidParamError
+from presidio_anonymizer.services.validators import validate_parameter
+
+
+class PrefixOperator(Operator):
+    """Prepend a configurable prefix to a PII value."""
+
+    PREFIX_KEY = "prefix"
+
+    def operate(self, text: str, params: Dict = None) -> str:
+        prefix = params.get(self.PREFIX_KEY, "[REDACTED]")
+        return f"{prefix}{text}"
+
+    def validate(self, params: Dict = None) -> None:
+        validate_parameter(params.get(self.PREFIX_KEY), self.PREFIX_KEY, str)
+
+    def operator_name(self) -> str:
+        return "prefix"
+
+    def operator_type(self) -> OperatorType:
+        return OperatorType.Anonymize
+```
+
+<Tip>
+  For reference, see the built-in `Hash` operator — it validates `hash_type` and an optional `salt`, then returns a salted SHA-256 or SHA-512 hex digest.
+</Tip>
+
+---
+
+## Built-in operator examples
+
+The built-in operators follow the same pattern. Here are two concise examples:
+
+<CodeGroup>
+
+```python hash operator (built-in)
+# presidio_anonymizer/operators/hash.py
+class Hash(Operator):
+    def operate(self, text: str = None, params: Dict = None) -> str:
+        hash_type = params.get("hash_type", "sha256")
+        salt = params.get("salt", os.urandom(32))
+        if isinstance(salt, str):
+            salt = salt.encode()
+        salted_text = text.encode() + salt
+        return {"sha256": sha256, "sha512": sha512}[hash_type](salted_text).hexdigest()
+
+    def operator_name(self) -> str:
+        return "hash"
+
+    def operator_type(self) -> OperatorType:
+        return OperatorType.Anonymize
+```
+
+```python encrypt operator (built-in)
+# presidio_anonymizer/operators/encrypt.py
+class Encrypt(Operator):
+    def operate(self, text: str = None, params: Dict = None) -> str:
+        key = params.get("key")
+        if isinstance(key, str):
+            key = key.encode("utf8")
+        return AESCipher.encrypt(key, text)
+
+    def operator_name(self) -> str:
+        return "encrypt"
+
+    def operator_type(self) -> OperatorType:
+        return OperatorType.Anonymize
+```
+
+</CodeGroup>
+
+---
+
+## Creating a custom deanonymizer operator
+
+Deanonymizers reverse a previous anonymization step. Set `operator_type` to `OperatorType.Deanonymize` and register with `DeanonymizeEngine.add_deanonymizer`.
+
+```python
+from presidio_anonymizer.operators import Operator, OperatorType
+
+
+class PseudonymDeanonymizer(Operator):
+    """Reverse a pseudonymization by looking up the original value."""
+
+    PSEUDONYM_MAP_KEY = "pseudonym_map"
+
+    def operate(self, text: str, params: Dict = None) -> str:
+        pseudonym_map = params.get(self.PSEUDONYM_MAP_KEY, {})
+        # Invert the map: pseudonym -> original
+        reverse_map = {v: k for k, v in pseudonym_map.items()}
+        return reverse_map.get(text, text)
+
+    def validate(self, params: Dict = None) -> None:
+        pass
+
+    def operator_name(self) -> str:
+        return "pseudonym"
+
+    def operator_type(self) -> OperatorType:
+        return OperatorType.Deanonymize
+```
+
+Register and use it with `DeanonymizeEngine`:
+
+```python
+from presidio_anonymizer import DeanonymizeEngine
+from presidio_anonymizer.entities import OperatorConfig, RecognizerResult
+
+deanonymizer = DeanonymizeEngine()
+deanonymizer.add_deanonymizer(PseudonymDeanonymizer)
+
+# pseudonym_map must be the same object used during anonymization
+deanonymized = deanonymizer.deanonymize(
+    text="My name is PERSON_1",
+    entities=[
+        RecognizerResult(entity_type="PERSON", start=11, end=19, score=0.85)
+    ],
+    operators={
+        "PERSON": OperatorConfig(
+            "pseudonym",
+            {"pseudonym_map": pseudonym_map},
+        )
+    },
+)
+print(deanonymized.text)
+# My name is John Smith
+```
+
+<Note>
+  The built-in `Decrypt` operator follows the same pattern — it has `operator_type = OperatorType.Deanonymize` and calls `AESCipher.decrypt` using the same key that was used during encryption.
+</Note>

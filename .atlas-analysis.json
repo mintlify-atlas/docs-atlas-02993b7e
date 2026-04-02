@@ -1,0 +1,108 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Presidio",
+  "projectDescription": "An open-source Python SDK for detecting, anonymizing, and redacting PII and sensitive data across text, images, and structured data using NLP, pattern matching, and customizable pipelines.",
+  "theme": "luma",
+  "primaryColor": "#646464",
+  "lightColor": "#cdcdcd",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart-text",
+              "quickstart-images",
+              "quickstart-structured"
+            ]
+          },
+          {
+            "group": "Core Modules",
+            "pages": [
+              "analyzer/overview",
+              "analyzer/recognizers",
+              "analyzer/nlp-engines",
+              "analyzer/languages",
+              "anonymizer/overview",
+              "anonymizer/operators",
+              "image-redactor/overview",
+              "structured/overview"
+            ]
+          },
+          {
+            "group": "Customization",
+            "pages": [
+              "customization/custom-recognizers",
+              "customization/custom-operators",
+              "customization/custom-nlp-models",
+              "customization/context-aware-enhancement"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/kubernetes",
+              "deployment/rest-api"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "supported-entities",
+              "samples",
+              "faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Python API",
+            "pages": [
+              "api/analyzer",
+              "api/anonymizer",
+              "api/image-redactor",
+              "api/structured"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "PII detection in text using NLP (spaCy, Transformers, Stanza) and pattern matching",
+    "PII anonymization with multiple operators: replace, redact, mask, hash, encrypt",
+    "Image PII redaction including DICOM medical images using OCR",
+    "Structured and semi-structured data anonymization (JSON, pandas DataFrames)",
+    "40+ built-in recognizers for global and country-specific PII entities",
+    "Extensible with custom recognizers and anonymization operators",
+    "Multi-language support for PII detection",
+    "REST API via Flask and Docker container deployment",
+    "Batch processing for large-scale anonymization workloads",
+    "Deanonymization support for reversible operations (e.g., decrypt)"
+  ],
+  "publicApiSurface": [
+    "AnalyzerEngine.analyze(text, entities, language)",
+    "BatchAnalyzerEngine.analyze_iterator(texts, language)",
+    "AnonymizerEngine.anonymize(text, analyzer_results, operators)",
+    "DeanonymizeEngine.deanonymize(text, entities, operators)",
+    "BatchAnonymizerEngine.anonymize_list(texts, analyzer_results_list)",
+    "PatternRecognizer(supported_entities, patterns, context)",
+    "EntityRecognizer.analyze(text, entities)",
+    "RecognizerRegistry.add_recognizer(recognizer)",
+    "AnalyzerEngineProvider(conf_file)",
+    "ImageRedactorEngine.redact(image, fill)",
+    "DicomImageRedactorEngine.redact(image, fill)",
+    "StructuredEngine.anonymize(data, operators, data_processor)",
+    "LMRecognizer(supported_entities, model)",
+    "LemmaContextAwareEnhancer(context_similarity_factor, min_score_with_context_similarity)"
+  ]
+}

@@ -1,0 +1,171 @@
+---
+title: 'Installation'
+description: 'Install Presidio via pip or Docker. Covers text, image, and structured data packages.'
+keywords: ['presidio', 'install', 'pip', 'docker', 'spaCy', 'transformers', 'stanza']
+---
+
+Presidio is distributed as Python packages on PyPI and as Docker container images.
+
+## Supported Python versions
+
+Presidio supports the following Python versions:
+
+- 3.10
+- 3.11
+- 3.12
+- 3.13
+
+<Note>
+  Install Presidio inside a virtual environment such as [venv](https://docs.python.org/3/tutorial/venv.html) or [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) to avoid dependency conflicts.
+</Note>
+
+## Install via pip
+
+### Text (presidio-analyzer + presidio-anonymizer)
+
+The `presidio-analyzer` package requires at least one NLP engine. Choose the engine that fits your use case:
+
+<CodeGroup>
+
+```bash spaCy (default)
+pip install presidio_analyzer
+pip install presidio_anonymizer
+python -m spacy download en_core_web_lg
+```
+
+```bash Transformers
+pip install "presidio_analyzer[transformers]"
+pip install presidio_anonymizer
+python -m spacy download en_core_web_sm
+```
+
+```bash Stanza
+pip install "presidio_analyzer[stanza]"
+pip install presidio_anonymizer
+```
+
+</CodeGroup>
+
+<Note>
+  **Transformers**: Presidio still uses spaCy for tokenization and lemmatization, so a small spaCy model (`en_core_web_sm`) is required alongside the transformers engine. Transformers models are loaded lazily on first use.
+
+  **Stanza**: Stanza models are also loaded lazily on first use.
+</Note>
+
+### GPU acceleration (optional)
+
+<CodeGroup>
+
+```bash Linux with NVIDIA GPU
+# Replace cuda12x with the version matching your CUDA installation
+pip install "spacy[cuda12x]"
+```
+
+```bash macOS with Apple Silicon
+# MPS is detected automatically — no additional packages required
+```
+
+</CodeGroup>
+
+### Images (presidio-image-redactor)
+
+<Steps>
+  <Step title="Install the Python package">
+    ```bash
+    pip install presidio_image_redactor
+
+    # presidio-image-redactor depends on presidio-analyzer,
+    # which requires a spaCy language model:
+    python -m spacy download en_core_web_lg
+    ```
+  </Step>
+  <Step title="Install Tesseract OCR">
+    The image redactor uses [Tesseract](https://github.com/tesseract-ocr/tesseract) as its default OCR engine. Install it for your platform:
+
+    <CodeGroup>
+
+    ```bash Ubuntu / Debian
+    sudo apt-get install tesseract-ocr
+    ```
+
+    ```bash macOS (Homebrew)
+    brew install tesseract
+    ```
+
+    ```bash Windows
+    # Download the installer from:
+    # https://github.com/UB-Mannheim/tesseract/wiki
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+### Structured data (presidio-structured)
+
+```bash
+pip install presidio_structured
+```
+
+<Warning>
+  `presidio-structured` is currently in **alpha**. Features and APIs may change between releases.
+</Warning>
+
+## Install via Docker
+
+Docker containers expose each Presidio service as a REST API. [Download Docker](https://docs.docker.com/get-docker/) before proceeding.
+
+### Text (analyzer + anonymizer)
+
+```bash
+# Pull images
+docker pull mcr.microsoft.com/presidio-analyzer
+docker pull mcr.microsoft.com/presidio-anonymizer
+
+# Run containers
+docker run -d -p 5002:3000 mcr.microsoft.com/presidio-analyzer:latest
+docker run -d -p 5001:3000 mcr.microsoft.com/presidio-anonymizer:latest
+```
+
+### Images (image-redactor)
+
+```bash
+# Pull image
+docker pull mcr.microsoft.com/presidio-image-redactor
+
+# Run container
+docker run -d -p 5003:3000 mcr.microsoft.com/presidio-image-redactor:latest
+```
+
+## Install from source
+
+<Steps>
+  <Step title="Clone the repository">
+    <CodeGroup>
+
+    ```bash HTTPS
+    git clone https://github.com/microsoft/presidio.git
+    ```
+
+    ```bash SSH
+    git clone git@github.com:microsoft/presidio.git
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Build all containers">
+    From the root of the repository, use docker-compose to build and start all services:
+
+    ```bash
+    docker-compose up --build
+    ```
+  </Step>
+  <Step title="Build a single service (optional)">
+    To build and run only one service, for example `presidio-anonymizer`:
+
+    ```bash
+    docker build ./presidio-anonymizer -t presidio/presidio-anonymizer
+    docker run -d -p 5001:5001 presidio/presidio-anonymizer
+    ```
+  </Step>
+</Steps>

@@ -1,0 +1,408 @@
+---
+title: "Structured API Reference"
+description: "Full Python API reference for the presidio-structured package."
+---
+
+The `presidio-structured` package applies Presidio anonymization to structured data — pandas DataFrames and JSON-like dictionaries — using a declarative field-to-entity mapping called `StructuredAnalysis`.
+
+## StructuredEngine
+
+The main entry point for anonymizing structured data. Applies operator configurations to specific fields or columns as defined in a `StructuredAnalysis` configuration.
+
+```python
+import pandas as pd
+from presidio_structured import StructuredEngine, PandasDataProcessor
+from presidio_structured.config import StructuredAnalysis
+from presidio_anonymizer.entities import OperatorConfig
+
+# Set up the engine with a Pandas processor
+engine = StructuredEngine(data_processor=PandasDataProcessor())
+
+# Define which columns contain which entities
+analysis = StructuredAnalysis(entity_mapping={
+    "name": "PERSON",
+    "email": "EMAIL_ADDRESS",
+    "phone": "PHONE_NUMBER",
+})
+
+# Anonymize
+df = pd.DataFrame({
+    "name": ["Alice Smith", "Bob Jones"],
+    "email": ["alice@example.com", "bob@example.com"],
+    "phone": ["555-1234", "555-5678"],
+})
+
+anonymized_df = engine.anonymize(
+    data=df,
+    structured_analysis=analysis,
+    operators={"PERSON": OperatorConfig("replace", {"new_value": "<PERSON>"})},
+)
+print(anonymized_df)
+```
+
+### Constructor
+
+<ParamField path="data_processor" type="DataProcessorBase" default="None">
+  A data processor instance that implements the `DataProcessorBase` interface. Determines how the anonymization is applied to the data. Defaults to `PandasDataProcessor` if not provided.
+
+  Built-in options:
+  - `PandasDataProcessor` — for pandas DataFrames
+  - `JsonDataProcessor` — for JSON-like dictionaries (supports arbitrary nesting)
+</ParamField>
+
+---
+
+### `anonymize`
+
+Anonymize the given structured data according to the `StructuredAnalysis` configuration.
+
+**Returns:** `Union[Dict, DataFrame]` — the same type as the input `data`.
+
+<ParamField path="data" type="Union[Dict, DataFrame]" required>
+  The input data to anonymize. Must match the type expected by the configured `data_processor` (a `DataFrame` for `PandasDataProcessor`, a `dict` or `list` for `JsonDataProcessor`).
+</ParamField>
+
+<ParamField path="structured_analysis" type="StructuredAnalysis" required>
+  The analysis configuration mapping field names (column names or JSON keys) to PII entity types.
+</ParamField>
+
+<ParamField path="operators" type="Dict[str, OperatorConfig]" default="None">
+  A mapping of entity type names to `OperatorConfig` objects specifying how each entity type should be anonymized. Use the key `"DEFAULT"` to apply an operator to all entity types without an explicit mapping. If `None`, a `replace` operator is applied to all entities by default.
+</ParamField>
+
+---
+
+## StructuredAnalysis
+
+A dataclass that defines the mapping between field names (DataFrame column names or JSON dict keys) and their corresponding PII entity types. This configuration is the input to `StructuredEngine.anonymize`.
+
+```python
+from presidio_structured.config import StructuredAnalysis
+
+# Flat mapping
+analysis = StructuredAnalysis(entity_mapping={
+    "full_name": "PERSON",
+    "email_address": "EMAIL_ADDRESS",
+})
+
+# Nested JSON path (dot-separated)
+analysis = StructuredAnalysis(entity_mapping={
+    "patient.name": "PERSON",
+    "patient.contact.phone": "PHONE_NUMBER",
+    "patient.contact.email": "EMAIL_ADDRESS",
+})
+```
+
+### Fields
+
+<ParamField path="entity_mapping" type="Dict[str, str]" required>
+  A dictionary mapping field names to entity type strings. Keys are column names (for DataFrames) or dot-separated JSON paths (for nested dicts). Values are Presidio entity type names such as `"PERSON"`, `"EMAIL_ADDRESS"`, `"PHONE_NUMBER"`, `"LOCATION"`, etc.
+
+  ```python
+  entity_mapping = {
+      "person.name": "PERSON",
+      "person.address": "LOCATION",
+  }
+  ```
+</ParamField>
+
+---
+
+## PandasDataProcessor
+
+A data processor implementation for pandas DataFrames. Applies the configured operators to the specified DataFrame columns row by row.
+
+```python
+from presidio_structured import PandasDataProcessor, StructuredEngine
+from presidio_structured.config import StructuredAnalysis
+from presidio_anonymizer.entities import OperatorConfig
+import pandas as pd
+
+processor = PandasDataProcessor()
+engine = StructuredEngine(data_processor=processor)
+
+df = pd.DataFrame({"name": ["Alice", "Bob"], "city": ["New York", "London"]})
+analysis = StructuredAnalysis(entity_mapping={"name": "PERSON", "city": "LOCATION"})
+
+anonymized = engine.anonymize(
+    data=df,
+    structured_analysis=analysis,
+    operators={
+        "PERSON": OperatorConfig("replace", {"new_value": "<PERSON>"}),
+        "LOCATION": OperatorConfig("replace", {"new_value": "<LOCATION>"}),
+    },
+)
+```
+
+`PandasDataProcessor` has no constructor parameters.
+
+<Warning>
+  `PandasDataProcessor` modifies the DataFrame in-place. Make a copy before calling `anonymize` if you need to preserve the original.
+</Warning>
+
+---
+
+## JsonDataProcessor
+
+A data processor implementation for JSON-like data (nested dicts and lists). Supports arbitrary nesting via dot-separated key paths in `StructuredAnalysis.entity_mapping`.
+
+```python
+from presidio_structured import JsonDataProcessor, StructuredEngine
+from presidio_structured.config import StructuredAnalysis
+from presidio_anonymizer.entities import OperatorConfig
+
+processor = JsonDataProcessor()
+engine = StructuredEngine(data_processor=processor)
+
+data = {
+    "patient": {
+        "name": "Alice Smith",
+        "contact": {
+            "phone": "555-1234",
+            "email": "alice@example.com",
+        },
+    },
+    "notes": "Patient seen on Monday.",
+}
+
+analysis = StructuredAnalysis(entity_mapping={
+    "patient.name": "PERSON",
+    "patient.contact.phone": "PHONE_NUMBER",
+    "patient.contact.email": "EMAIL_ADDRESS",
+})
+
+anonymized = engine.anonymize(
+    data=data,
+    structured_analysis=analysis,
+    operators={"DEFAULT": OperatorConfig("replace")},
+)
+print(anonymized["patient"]["name"])  # "<PERSON>"
+```
+
+`JsonDataProcessor` has no constructor parameters.
+
+---
+
+## PandasAnalysisBuilder
+
+Automatically generates a `StructuredAnalysis` configuration from a pandas DataFrame by running the Presidio Analyzer on sampled column values and inferring which entity type is most prevalent in each column.
+
+```python
+import pandas as pd
+from presidio_structured import PandasAnalysisBuilder
+
+df = pd.DataFrame({
+    "full_name": ["Alice Smith", "Bob Jones", "Carol White"],
+    "phone": ["555-1234", "555-5678", "555-9012"],
+    "age": [30, 45, 28],
+})
+
+builder = PandasAnalysisBuilder()
+analysis = builder.generate_analysis(df, language="en")
+print(analysis.entity_mapping)
+# {"full_name": "PERSON", "phone": "PHONE_NUMBER"}
+```
+
+### Constructor
+
+<ParamField path="analyzer" type="AnalyzerEngine" default="None">
+  A Presidio `AnalyzerEngine` instance to use. If not provided, a default engine is created.
+</ParamField>
+
+<ParamField path="analyzer_score_threshold" type="float" default="None">
+  Minimum confidence score for a detection to be considered. Passed as `default_score_threshold` to the `AnalyzerEngine` if `analyzer` is not provided.
+</ParamField>
+
+<ParamField path="n_process" type="int" default="1">
+  Number of parallel processes to use for batch analysis.
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="1">
+  Number of texts to process per NLP batch iteration.
+</ParamField>
+
+---
+
+### `generate_analysis`
+
+Analyze a sample of DataFrame rows and return a `StructuredAnalysis` mapping column names to entity types.
+
+```python
+analysis = builder.generate_analysis(
+    df=df,
+    n=100,
+    language="en",
+    selection_strategy="most_common",
+)
+```
+
+**Returns:** `StructuredAnalysis`
+
+<ParamField path="df" type="DataFrame" required>
+  The pandas DataFrame to analyze.
+</ParamField>
+
+<ParamField path="n" type="int" default="None">
+  Number of rows to sample from the DataFrame for analysis. If `None` or greater than the total row count, all rows are used.
+</ParamField>
+
+<ParamField path="language" type="str" default='"en"'>
+  The language code to use for PII detection.
+</ParamField>
+
+<ParamField path="selection_strategy" type="str" default='"most_common"'>
+  How to determine the entity type for a column when multiple entity types are detected:
+
+  - `"most_common"` — selects the entity type that appears most frequently across sampled rows
+  - `"highest_confidence"` — selects the entity type with the single highest confidence score
+  - `"mixed"` — uses `"highest_confidence"` if the top score exceeds `mixed_strategy_threshold`, otherwise falls back to `"most_common"`
+</ParamField>
+
+<ParamField path="mixed_strategy_threshold" type="float" default="0.5">
+  The confidence threshold used when `selection_strategy` is `"mixed"`. If the highest observed score is above this value, `"highest_confidence"` is used; otherwise `"most_common"` is used.
+</ParamField>
+
+---
+
+## JsonAnalysisBuilder
+
+Automatically generates a `StructuredAnalysis` configuration from a JSON-like dictionary by running the Presidio Batch Analyzer on the dict values.
+
+```python
+from presidio_structured import JsonAnalysisBuilder
+
+data = {
+    "name": "Alice Smith",
+    "phone": "555-1234",
+    "country": "United States",
+}
+
+builder = JsonAnalysisBuilder()
+analysis = builder.generate_analysis(data, language="en")
+print(analysis.entity_mapping)
+# {"name": "PERSON", "phone": "PHONE_NUMBER", "country": "LOCATION"}
+```
+
+### Constructor
+
+Same parameters as `PandasAnalysisBuilder`:
+
+<ParamField path="analyzer" type="AnalyzerEngine" default="None">
+  A Presidio `AnalyzerEngine` instance. Defaults to a new default engine.
+</ParamField>
+
+<ParamField path="analyzer_score_threshold" type="float" default="None">
+  Minimum confidence score threshold.
+</ParamField>
+
+<ParamField path="n_process" type="int" default="1">
+  Number of parallel processes.
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="1">
+  Batch size for NLP processing.
+</ParamField>
+
+---
+
+### `generate_analysis`
+
+Analyze the dict values and return a `StructuredAnalysis` with dot-separated key paths for nested structures.
+
+```python
+analysis = builder.generate_analysis(data, language="en")
+```
+
+**Returns:** `StructuredAnalysis`
+
+<ParamField path="data" type="Dict" required>
+  The input JSON-like dictionary to analyze.
+</ParamField>
+
+<ParamField path="language" type="str" default='"en"'>
+  The language code to use for PII detection.
+</ParamField>
+
+---
+
+## Usage Examples
+
+<Tabs>
+  <Tab title="DataFrame">
+    ```python
+    import pandas as pd
+    from presidio_structured import StructuredEngine, PandasDataProcessor, PandasAnalysisBuilder
+    from presidio_structured.config import StructuredAnalysis
+    from presidio_anonymizer.entities import OperatorConfig
+
+    df = pd.DataFrame({
+        "name": ["Alice Smith", "Bob Jones"],
+        "email": ["alice@example.com", "bob@example.com"],
+        "age": [30, 45],
+    })
+
+    # Option 1: define analysis manually
+    analysis = StructuredAnalysis(entity_mapping={
+        "name": "PERSON",
+        "email": "EMAIL_ADDRESS",
+    })
+
+    # Option 2: auto-generate analysis from data
+    builder = PandasAnalysisBuilder()
+    analysis = builder.generate_analysis(df, language="en")
+
+    engine = StructuredEngine(data_processor=PandasDataProcessor())
+    anonymized_df = engine.anonymize(
+        data=df.copy(),
+        structured_analysis=analysis,
+        operators={
+            "PERSON": OperatorConfig("replace", {"new_value": "<PERSON>"}),
+            "EMAIL_ADDRESS": OperatorConfig("mask", {
+                "masking_char": "*",
+                "chars_to_mask": 10,
+                "from_end": False,
+            }),
+        },
+    )
+    print(anonymized_df)
+    ```
+  </Tab>
+  <Tab title="JSON / dict">
+    ```python
+    from presidio_structured import StructuredEngine, JsonDataProcessor, JsonAnalysisBuilder
+    from presidio_structured.config import StructuredAnalysis
+    from presidio_anonymizer.entities import OperatorConfig
+
+    data = {
+        "patient": {
+            "name": "Alice Smith",
+            "dob": "1990-01-15",
+            "contact": {
+                "phone": "555-1234",
+                "email": "alice@example.com",
+            },
+        },
+    }
+
+    # Option 1: define analysis manually using dot-separated paths
+    analysis = StructuredAnalysis(entity_mapping={
+        "patient.name": "PERSON",
+        "patient.contact.phone": "PHONE_NUMBER",
+        "patient.contact.email": "EMAIL_ADDRESS",
+    })
+
+    # Option 2: auto-generate analysis
+    builder = JsonAnalysisBuilder()
+    analysis = builder.generate_analysis(data, language="en")
+
+    engine = StructuredEngine(data_processor=JsonDataProcessor())
+    anonymized = engine.anonymize(
+        data=data,
+        structured_analysis=analysis,
+        operators={"DEFAULT": OperatorConfig("replace")},
+    )
+    print(anonymized["patient"]["name"])         # "<PERSON>"
+    print(anonymized["patient"]["contact"]["phone"])  # "<PHONE_NUMBER>"
+    ```
+  </Tab>
+</Tabs>

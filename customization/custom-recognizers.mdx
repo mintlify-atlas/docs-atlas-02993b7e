@@ -1,0 +1,515 @@
+---
+title: "Custom recognizers"
+description: "Add new PII entity types to Presidio Analyzer using pattern-based, logic-based, remote, or language-model-based recognizers."
+keywords: ["presidio", "custom recognizer", "entity recognizer", "pattern recognizer", "PII detection"]
+---
+
+Presidio ships with recognizers for dozens of common PII entity types. When you need to detect something new — an internal employee ID, a custom code format, or an entity specific to your domain — you create and register a custom recognizer.
+
+## Types of recognizers
+
+<CardGroup cols={2}>
+  <Card title="PatternRecognizer" icon="magnifying-glass">
+    Regex patterns and deny-lists. The easiest starting point for most entity types.
+  </Card>
+  <Card title="EntityRecognizer" icon="code">
+    Arbitrary Python logic. Subclass this when regex alone isn't enough.
+  </Card>
+  <Card title="RemoteRecognizer" icon="server">
+    Call an external HTTP service for PII detection from within the Presidio pipeline.
+  </Card>
+  <Card title="LMRecognizer" icon="brain">
+    Language-model-based detection using LLMs or SLMs for flexible PII/PHI recognition.
+  </Card>
+</CardGroup>
+
+---
+
+## PatternRecognizer
+
+`PatternRecognizer` is a subclass of `LocalRecognizer` that detects entities using regular expressions or deny-lists. It handles context-word boosting, validation, and duplicate removal automatically.
+
+### Constructor signature
+
+```python
+PatternRecognizer(
+    supported_entity: str,
+    name: str = None,
+    supported_language: str = "en",
+    patterns: List[Pattern] = None,
+    deny_list: List[str] = None,
+    context: List[str] = None,
+    deny_list_score: float = 1.0,
+    global_regex_flags: Optional[int] = re.DOTALL | re.MULTILINE | re.IGNORECASE,
+    version: str = "0.0.1",
+)
+```
+
+You must supply at least one of `patterns` or `deny_list`.
+
+### Deny-list recognizer
+
+The simplest form: match exact words or phrases.
+
+```python
+from presidio_analyzer import PatternRecognizer
+
+titles_recognizer = PatternRecognizer(
+    supported_entity="TITLE",
+    deny_list=["Mr.", "Mrs.", "Miss", "Dr."],
+)
+
+results = titles_recognizer.analyze(text="Mr. Schmidt", entities=["TITLE"])
+print(results)
+# [type: TITLE, start: 0, end: 3, score: 1.0]
+```
+
+### Regex pattern recognizer
+
+Use `Pattern` objects to define regex rules with a confidence score.
+
+```python
+from presidio_analyzer import PatternRecognizer, Pattern
+
+# Weak pattern: 5-digit zip code
+zip_pattern = Pattern(
+    name="zip code (weak)",
+    regex=r"(\b\d{5}(?:\-\d{4})?\b)",
+    score=0.01,
+)
+
+zip_recognizer = PatternRecognizer(
+    supported_entity="ZIP_CODE",
+    patterns=[zip_pattern],
+    context=["zip", "code", "postal"],
+)
+```
+
+<Note>
+  Scores range from `0.0` to `1.0`. Low-confidence patterns benefit from context words — see [context-aware enhancement](/customization/context-aware-enhancement).
+</Note>
+
+### Validation and invalidation
+
+Override `validate_result` to run checksum or format logic after a regex match. Return `True` to boost the score to `1.0`, `False` to drop it to `0.0`, or `None` to leave it unchanged.
+
+Override `invalidate_result` to prune results — return `True` to discard the match (score set to `0.0`).
+
+```python
+from presidio_analyzer import PatternRecognizer, Pattern
+
+class SsnRecognizer(PatternRecognizer):
+    """Detect US Social Security Numbers with basic validation."""
+
+    SSN_PATTERN = Pattern(
+        name="ssn",
+        regex=r"\b(\d{3})-(\d{2})-(\d{4})\b",
+        score=0.5,
+    )
+
+    def __init__(self):
+        super().__init__(
+            supported_entity="US_SSN",
+            patterns=[self.SSN_PATTERN],
+            context=["ssn", "social security", "social security number"],
+        )
+
+    def validate_result(self, pattern_text: str):
+        # Reject SSNs where all digits in any group are identical
+        parts = pattern_text.replace("-", "")
+        if len(set(parts)) == 1:
+            return False
+        return None
+
+    def invalidate_result(self, pattern_text: str):
+        # Reject known invalid area numbers (000, 666, 900-999)
+        area = int(pattern_text.split("-")[0])
+        return area in (0, 666) or area >= 900
+```
+
+### Registering with AnalyzerEngine
+
+<Steps>
+  <Step title="Create a recognizer registry">
+    ```python
+    from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+
+    registry = RecognizerRegistry()
+    registry.load_predefined_recognizers()
+    ```
+  </Step>
+  <Step title="Add your recognizer">
+    ```python
+    registry.add_recognizer(zip_recognizer)
+    ```
+  </Step>
+  <Step title="Pass the registry to AnalyzerEngine">
+    ```python
+    analyzer = AnalyzerEngine(registry=registry)
+    results = analyzer.analyze(text="Zip code: 10023", language="en")
+    print(results)
+    ```
+  </Step>
+</Steps>
+
+You can also add a recognizer to an existing engine directly:
+
+```python
+analyzer = AnalyzerEngine()
+analyzer.registry.add_recognizer(zip_recognizer)
+```
+
+### Configuring regex flags
+
+Override flags for a single recognizer or for all pattern recognizers in a registry:
+
+<CodeGroup>
+
+```python single recognizer
+import regex as re
+from presidio_analyzer import Pattern, PatternRecognizer
+
+recognizer = PatternRecognizer(
+    supported_entity="MY_ENTITY",
+    patterns=[Pattern(name="my_pattern", regex=r"\bfoo\b", score=0.8)],
+    global_regex_flags=re.DOTALL | re.MULTILINE,  # case-sensitive
+)
+```
+
+```python all recognizers
+import regex as re
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+
+registry = RecognizerRegistry(
+    global_regex_flags=re.DOTALL | re.MULTILINE | re.IGNORECASE
+)
+engine = AnalyzerEngine(registry=registry)
+```
+
+</CodeGroup>
+
+---
+
+## Custom EntityRecognizer
+
+When your detection logic goes beyond patterns — for example, combining NLP features like POS tags, lemmas, or dependencies — subclass `LocalRecognizer` (which extends `EntityRecognizer`).
+
+### Required methods
+
+| Method | Purpose |
+|--------|---------|
+| `load()` | Load any models or resources. Called once on initialization. |
+| `analyze(text, entities, nlp_artifacts)` | Run detection. Return a `List[RecognizerResult]`. |
+
+### Example: title recognizer using NLP artifacts
+
+```python
+from typing import List, Optional
+from presidio_analyzer import LocalRecognizer, RecognizerResult, AnalysisExplanation
+from presidio_analyzer.nlp_engine import NlpArtifacts
+
+class TitleRecognizer(LocalRecognizer):
+    """Detect honorific titles using POS tagging."""
+
+    TITLES = {"mr", "mrs", "ms", "dr", "prof"}
+
+    def __init__(self):
+        super().__init__(
+            supported_entities=["TITLE"],
+            supported_language="en",
+        )
+
+    def load(self):
+        pass  # no external resources needed
+
+    def analyze(
+        self,
+        text: str,
+        entities: List[str],
+        nlp_artifacts: Optional[NlpArtifacts] = None,
+    ) -> List[RecognizerResult]:
+        results = []
+
+        if nlp_artifacts is None:
+            return results
+
+        for token, idx in zip(nlp_artifacts.tokens, nlp_artifacts.tokens_indices):
+            if token.lower_.rstrip(".") in self.TITLES:
+                result = RecognizerResult(
+                    entity_type="TITLE",
+                    start=idx,
+                    end=idx + len(token),
+                    score=0.85,
+                    analysis_explanation=AnalysisExplanation(
+                        recognizer=self.name,
+                        original_score=0.85,
+                        textual_explanation=f"Detected honorific title: {token}",
+                    ),
+                    recognition_metadata={
+                        RecognizerResult.RECOGNIZER_NAME_KEY: self.name,
+                        RecognizerResult.RECOGNIZER_IDENTIFIER_KEY: self.id,
+                    },
+                )
+                results.append(result)
+
+        return results
+```
+
+<Note>
+  The `nlp_artifacts` object provides `tokens`, `lemmas`, `tokens_indices`, `entities`, and more. These come from whichever NLP engine is configured (spaCy, Stanza, or Transformers).
+</Note>
+
+---
+
+## RemoteRecognizer
+
+Use `RemoteRecognizer` when your detection logic lives in a separate process or external service — for example, a 3rd party PII API or an isolated model server.
+
+### Abstract interface
+
+```python
+# presidio_analyzer/remote_recognizer.py
+class RemoteRecognizer(ABC, EntityRecognizer):
+    def load(self):
+        pass  # no-op by default
+
+    @abstractmethod
+    def analyze(self, text: str, entities: List[str], nlp_artifacts: NlpArtifacts):
+        # 1. Call the external service.
+        # 2. Translate results into List[RecognizerResult]
+        pass
+
+    @abstractmethod
+    def get_supported_entities(self) -> List[str]:
+        pass
+```
+
+### Example: HTTP-based remote recognizer
+
+```python
+import requests
+from typing import List
+from presidio_analyzer import RecognizerResult
+from presidio_analyzer.nlp_engine import NlpArtifacts
+from presidio_analyzer.remote_recognizer import RemoteRecognizer
+
+
+class MyRemoteRecognizer(RemoteRecognizer):
+    """Call an external PII detection service over HTTP."""
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url
+        super().__init__(
+            supported_entities=self.get_supported_entities(),
+            name="MyRemoteRecognizer",
+            supported_language="en",
+            version="1.0.0",
+        )
+
+    def get_supported_entities(self) -> List[str]:
+        response = requests.get(f"{self.base_url}/supported_entities")
+        return response.json()
+
+    def analyze(
+        self, text: str, entities: List[str], nlp_artifacts: NlpArtifacts
+    ) -> List[RecognizerResult]:
+        response = requests.post(
+            f"{self.base_url}/detect",
+            json={"text": text, "entities": entities},
+        )
+        results = []
+        for item in response.json():
+            results.append(
+                RecognizerResult(
+                    entity_type=item["entity_type"],
+                    start=item["start"],
+                    end=item["end"],
+                    score=item["score"],
+                )
+            )
+        return results
+```
+
+<Tip>
+  If a model has dependencies that conflict with `presidio-analyzer`, isolate it behind an HTTP endpoint and use `RemoteRecognizer` to integrate it cleanly.
+</Tip>
+
+---
+
+## LMRecognizer
+
+`LMRecognizer` extends `RemoteRecognizer` and provides a standard pipeline for language-model-based PII detection. It handles result filtering, score thresholds, generic entity consolidation, and position validation.
+
+### Class signature
+
+```python
+# presidio_analyzer/lm_recognizer.py
+class LMRecognizer(RemoteRecognizer, ABC):
+    def __init__(
+        self,
+        supported_entities: Optional[List[str]] = None,
+        supported_language: str = "en",
+        name: Optional[str] = None,
+        version: str = "1.0.0",
+        model_id: Optional[str] = None,
+        temperature: Optional[float] = None,
+        min_score: float = 0.5,
+        labels_to_ignore: Optional[List[str]] = None,
+        enable_generic_consolidation: bool = True,
+    ):
+        ...
+```
+
+### Subclassing LMRecognizer
+
+Implement `_call_llm()` to integrate with a specific LLM provider. The base class `analyze()` method calls `_call_llm()` and then applies filtering and post-processing automatically.
+
+```python
+from typing import List, Optional
+from presidio_analyzer import RecognizerResult
+from presidio_analyzer.lm_recognizer import LMRecognizer
+
+
+class OllamaRecognizer(LMRecognizer):
+    """Detect PII using a local Ollama model."""
+
+    def __init__(self, model_id: str = "llama3"):
+        super().__init__(
+            supported_entities=["PERSON", "LOCATION", "ORGANIZATION", "EMAIL_ADDRESS"],
+            model_id=model_id,
+            min_score=0.6,
+        )
+
+    def _call_llm(
+        self, text: str, entities: List[str], **kwargs
+    ) -> List[RecognizerResult]:
+        # Implement LLM call and return RecognizerResult list
+        # (truncated for brevity)
+        ...
+```
+
+<Note>
+  The built-in `LangExtractRecognizer` uses Ollama with LangExtract under the hood. See the [LangExtract sample](https://github.com/microsoft/presidio/tree/main/docs/samples/python/langextract) for a full working example.
+</Note>
+
+### Configuration options
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `supported_entities` | required | Entity types the LLM should detect. |
+| `min_score` | `0.5` | Discard results below this confidence score. |
+| `labels_to_ignore` | `[]` | Skip these entity labels even if the model returns them. |
+| `enable_generic_consolidation` | `True` | Map unknown entity types to `GENERIC_PII_ENTITY`. |
+| `model_id` | `None` | Model identifier passed to the LLM provider. |
+| `temperature` | `None` | Sampling temperature for the LLM. |
+
+---
+
+## Loading recognizers from YAML
+
+You can define `PatternRecognizer` instances in a YAML file and load them without writing Python code.
+
+### YAML recognizer format
+
+```yaml
+# recognizers.yaml
+- name: Zip Code Recognizer
+  supported_language: en
+  supported_entity: ZIP_CODE
+  patterns:
+    - name: zip_weak
+      regex: "\\b\\d{5}(?:\\-\\d{4})?\\b"
+      score: 0.01
+    - name: zip_strong
+      regex: "(?i)zip\\s*:?\\s*(\\d{5})"
+      score: 0.6
+  context:
+    - zip
+    - code
+    - postal
+
+- name: Title Recognizer
+  supported_language: en
+  supported_entity: TITLE
+  deny_list:
+    - Mr.
+    - Mrs.
+    - Miss
+    - Dr.
+    - Prof.
+```
+
+### Loading from YAML
+
+<CodeGroup>
+
+```python replace predefined recognizers
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.recognizer_registry import RecognizerRegistryProvider
+
+provider = RecognizerRegistryProvider(conf_file="./recognizers.yaml")
+registry = provider.create_recognizer_registry()
+analyzer = AnalyzerEngine(registry=registry)
+
+results = analyzer.analyze(text="Zip code: 10023", language="en")
+print(results)
+```
+
+```python add to predefined recognizers
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+
+registry = RecognizerRegistry()
+registry.load_predefined_recognizers()
+registry.add_recognizers_from_yaml("./recognizers.yaml")
+
+analyzer = AnalyzerEngine(registry=registry)
+results = analyzer.analyze(text="Mr. and Mrs. Smith", language="en")
+print(results)
+```
+
+</CodeGroup>
+
+### Ad-hoc recognizers in API requests
+
+Pattern and deny-list recognizers can also be passed inline in a single `/analyze` API request. These are only applied to that specific request.
+
+<CodeGroup>
+
+```json pattern-based
+{
+  "text": "My zip code is 10023",
+  "language": "en",
+  "ad_hoc_recognizers": [
+    {
+      "name": "Zip code Recognizer",
+      "supported_language": "en",
+      "patterns": [
+        {
+          "name": "zip code (weak)",
+          "regex": "(\\b\\d{5}(?:\\-\\d{4})?\\b)",
+          "score": 0.01
+        }
+      ],
+      "context": ["zip", "code"],
+      "supported_entity": "ZIP"
+    }
+  ]
+}
+```
+
+```json deny-list-based
+{
+  "text": "Mr. John Smith",
+  "language": "en",
+  "ad_hoc_recognizers": [
+    {
+      "name": "Title Recognizer",
+      "supported_language": "en",
+      "deny_list": ["Mr", "Mr.", "Mister"],
+      "supported_entity": "MR_TITLE"
+    }
+  ]
+}
+```
+
+</CodeGroup>

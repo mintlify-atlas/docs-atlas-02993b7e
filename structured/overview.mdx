@@ -1,0 +1,200 @@
+---
+title: 'Structured overview'
+description: 'Anonymize PII in pandas DataFrames and JSON data using Presidio Structured — a flexible framework for structured and semi-structured data.'
+keywords: ['presidio', 'structured', 'DataFrame', 'pandas', 'JSON', 'PII', 'anonymize', 'tabular']
+---
+
+The Presidio Structured package extends Presidio's PII detection and anonymization capabilities to **structured and semi-structured data formats** — including pandas DataFrames and JSON/dict objects.
+
+It uses `AnalyzerEngine` to detect which columns or keys contain PII, builds a mapping of field names to entity types, and then applies `AnonymizerEngine` operators to each value in the identified fields.
+
+## Installation
+
+```bash
+pip install presidio-structured
+```
+
+## Core classes
+
+| Class | Description |
+|---|---|
+| `StructuredEngine` | Main engine for anonymizing DataFrames and dicts. |
+| `StructuredAnalysis` | Configuration object mapping field names to PII entity types. |
+| `PandasAnalysisBuilder` | Analyzes a DataFrame to auto-detect PII columns and build a `StructuredAnalysis`. |
+| `JsonAnalysisBuilder` | Analyzes a JSON/dict to auto-detect PII keys and build a `StructuredAnalysis`. |
+| `PandasDataProcessor` | Processes DataFrames (default). |
+| `JsonDataProcessor` | Processes JSON/dict structures. |
+
+## Anonymizing DataFrames
+
+```python
+import pandas as pd
+from presidio_structured import StructuredEngine, PandasAnalysisBuilder
+from presidio_anonymizer.entities import OperatorConfig
+from faker import Faker
+
+# Initialize with the default PandasDataProcessor
+pandas_engine = StructuredEngine()
+
+# Create a sample DataFrame
+sample_df = pd.DataFrame({
+    "name": ["John Doe", "Jane Smith"],
+    "email": ["john.doe@example.com", "jane.smith@example.com"]
+})
+
+# Auto-detect PII columns and build analysis
+tabular_analysis = PandasAnalysisBuilder().generate_analysis(sample_df)
+
+# Define anonymization operators per entity type
+fake = Faker()
+operators = {
+    "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    "EMAIL_ADDRESS": OperatorConfig("custom", {"lambda": lambda x: fake.safe_email()})
+}
+
+# Anonymize
+anonymized_df = pandas_engine.anonymize(sample_df, tabular_analysis, operators=operators)
+print(anonymized_df)
+```
+
+## Anonymizing JSON data
+
+```python
+from presidio_structured import StructuredEngine, JsonAnalysisBuilder, JsonDataProcessor
+from presidio_anonymizer.entities import OperatorConfig
+from faker import Faker
+
+# Initialize with JsonDataProcessor
+json_engine = StructuredEngine(data_processor=JsonDataProcessor())
+
+sample_json = {
+    "user": {
+        "name": "John Doe",
+        "email": "john.doe@example.com"
+    }
+}
+
+# Auto-detect PII keys
+json_analysis = JsonAnalysisBuilder().generate_analysis(sample_json)
+
+fake = Faker()
+operators = {
+    "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    "EMAIL_ADDRESS": OperatorConfig("custom", {"lambda": lambda x: fake.safe_email()})
+}
+
+anonymized_json = json_engine.anonymize(sample_json, json_analysis, operators=operators)
+print(anonymized_json)
+```
+
+### Nested objects in lists
+
+`JsonAnalysisBuilder` does not currently support auto-detection of PII in nested list objects. For these structures, define the `StructuredAnalysis` manually using dot-notation paths:
+
+```python
+from presidio_structured import StructuredEngine, StructuredAnalysis, JsonDataProcessor
+from presidio_anonymizer.entities import OperatorConfig
+from faker import Faker
+
+json_engine = StructuredEngine(data_processor=JsonDataProcessor())
+
+sample_complex_json = {
+    "users": [
+        {"name": "John Doe", "email": "john.doe@example.com"},
+        {"name": "Jane Smith", "email": "jane.smith@example.com"}
+    ]
+}
+
+# Manually define the mapping for nested fields
+json_complex_analysis = StructuredAnalysis(entity_mapping={
+    "users.name": "PERSON",
+    "users.email": "EMAIL_ADDRESS"
+})
+
+fake = Faker()
+operators = {
+    "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    "EMAIL_ADDRESS": OperatorConfig("custom", {"lambda": lambda x: fake.safe_email()})
+}
+
+anonymized_complex_json = json_engine.anonymize(
+    sample_complex_json, json_complex_analysis, operators=operators
+)
+print(anonymized_complex_json)
+```
+
+## `StructuredAnalysis`
+
+`StructuredAnalysis` holds the mapping from field/column names to Presidio entity types. You can create it manually or let `PandasAnalysisBuilder` / `JsonAnalysisBuilder` generate it automatically.
+
+```python
+from presidio_structured import StructuredAnalysis
+
+analysis = StructuredAnalysis(entity_mapping={
+    "full_name": "PERSON",
+    "email_address": "EMAIL_ADDRESS",
+    "phone": "PHONE_NUMBER",
+    "ssn": "US_SSN",
+})
+```
+
+## Entity selection strategies
+
+When `PandasAnalysisBuilder` or `JsonAnalysisBuilder` auto-detects PII in a column/key, it may find multiple entity types. Three strategies control which entity is selected:
+
+| Strategy | Description |
+|---|---|
+| `most_common` (default) | The most frequently detected entity type across column values. |
+| `highest_confidence` | The entity type with the highest confidence score. |
+| `mixed` | Uses `highest_confidence` if the score exceeds a threshold; otherwise falls back to `most_common`. |
+
+```python
+from presidio_structured import PandasAnalysisBuilder
+
+# Most common (default)
+analysis = PandasAnalysisBuilder().generate_analysis(sample_df)
+
+# Highest confidence
+analysis = PandasAnalysisBuilder().generate_analysis(
+    sample_df, selection_strategy="highest_confidence"
+)
+
+# Mixed strategy with custom threshold
+analysis = PandasAnalysisBuilder().generate_analysis(
+    sample_df,
+    selection_strategy="mixed",
+    mixed_strategy_threshold=0.75
+)
+```
+
+## `StructuredEngine.anonymize()`
+
+```python
+StructuredEngine.anonymize(
+    data,               # pandas DataFrame or dict
+    structured_analysis,  # StructuredAnalysis describing field→entity mapping
+    operators=None      # Dict[str, OperatorConfig] — defaults to replace with entity type
+)
+```
+
+If `operators` is `None` or has no `"DEFAULT"` key, the default operator is `replace` using the entity type as the replacement value.
+
+## Data processors
+
+| Processor | Handles |
+|---|---|
+| `PandasDataProcessor` | pandas `DataFrame` objects (default). |
+| `JsonDataProcessor` | Python `dict` / JSON structures. |
+
+Pass the processor when instantiating `StructuredEngine`:
+
+```python
+from presidio_structured import StructuredEngine
+from presidio_structured.data.data_processors import JsonDataProcessor
+
+engine = StructuredEngine(data_processor=JsonDataProcessor())
+```
+
+<Note>
+Mixed-type datasets (columns with both free text and structured values) may require manual `StructuredAnalysis` configuration rather than relying on auto-detection.
+</Note>

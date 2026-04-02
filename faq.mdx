@@ -1,0 +1,470 @@
+---
+title: 'FAQ'
+description: 'Answers to frequently asked questions about Presidio — from getting started to customization, anonymization, and deployment.'
+keywords: ['FAQ', 'questions', 'PII', 'detection', 'anonymization', 'deployment', 'NLP']
+---
+
+<Warning>
+  Presidio uses automated detection and cannot guarantee that all PII will be identified. Additional systems and protections should always be employed alongside Presidio.
+</Warning>
+
+---
+
+## General
+
+<AccordionGroup>
+  <Accordion title="What is Presidio?">
+    Presidio (from the Latin *praesidium*, meaning "protection, garrison") is an open-source SDK for identifying and anonymizing sensitive data in text and images. It provides fast, pluggable modules for PII detection and anonymization that can be adapted to specific needs and deployed in a wide range of environments.
+
+    Presidio is a **library**, not a hosted service. It is designed to be customized to your organization's requirements.
+
+    Key capabilities:
+    - Detect PII in unstructured text using pattern matching, NER models, checksum validation, and contextual rules
+    - Anonymize detected PII using built-in operators (redact, replace, hash, encrypt, and more)
+    - Redact PII from images using OCR
+    - Analyze and anonymize structured and tabular data
+    - Extend detection with custom recognizers or third-party PII services
+  </Accordion>
+
+  <Accordion title="Why did Microsoft create Presidio?">
+    Presidio was created by the [Industry Solutions Engineering](https://microsoft.github.io/code-with-engineering-playbook) team at Microsoft. The recurring challenge of handling private and sensitive data across customer engagements led to building a reusable, extensible framework.
+
+    The goals behind Presidio are:
+    1. Democratize de-identification technologies so organizations can preserve privacy more easily.
+    2. Embrace extensibility and customizability to address specific business needs.
+    3. Facilitate both fully automated and semi-automated PII de-identification across multiple platforms.
+  </Accordion>
+
+  <Accordion title="Is Presidio an official Microsoft product?">
+    No. Microsoft Presidio is maintained by the Industry Solutions Engineering team but is **not** an official Microsoft product. Usage terms are defined in the [repository's license](https://github.com/microsoft/presidio/blob/main/LICENSE).
+  </Accordion>
+
+  <Accordion title="Is Presidio guaranteed to find all PII?">
+    No. Presidio uses automated detection methods (pattern matching, NER models, heuristics) and will inevitably produce both false positives and false negatives. No automated system can guarantee complete PII coverage.
+
+    To reduce the risk of missed PII:
+    - Add custom recognizers for entity types specific to your dataset
+    - Supplement Presidio with third-party services (e.g., Azure AI Language, Azure Health Data Services)
+    - Evaluate and tune recognizer confidence thresholds for your data
+    - Consider human review for high-risk use cases
+  </Accordion>
+
+  <Accordion title="Which Python versions are supported?">
+    Presidio supports Python 3.9 and above. Check the [installation documentation](https://microsoft.github.io/presidio/installation/) for the specific version requirements of each package.
+  </Accordion>
+
+  <Accordion title="What is the difference between Presidio and SaaS PII detection services like Azure AI Language or Amazon Comprehend?">
+    The key distinction is **customizability vs. coverage**:
+
+    - **Presidio** is an open-source library designed to be deeply customized — you can add recognizers, swap NLP models, and integrate external services. It runs entirely within your own infrastructure.
+    - **SaaS services** (Azure AI Language, Amazon Comprehend, Azure Health Data Services) use purpose-built ML models and tend to offer broader entity coverage or higher out-of-the-box accuracy, but with less flexibility.
+
+    These approaches are not mutually exclusive. Presidio can act as a framework that orchestrates multiple detection sources, including SaaS APIs, making it possible to get the best of both.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Usage
+
+<AccordionGroup>
+  <Accordion title="How do I get started with Presidio?">
+    <Steps>
+      <Step title="Install the packages">
+        ```bash
+        pip install presidio-analyzer presidio-anonymizer
+        python -m spacy download en_core_web_lg
+        ```
+      </Step>
+      <Step title="Run your first analysis">
+        ```python
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_anonymizer import AnonymizerEngine
+
+        analyzer = AnalyzerEngine()
+        anonymizer = AnonymizerEngine()
+
+        text = "My name is John Smith and my email is john@example.com"
+        results = analyzer.analyze(text=text, language="en")
+        anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+
+        print(anonymized.text)
+        # My name is <PERSON> and my email is <EMAIL_ADDRESS>
+        ```
+      </Step>
+      <Step title="Explore samples and docs">
+        Review the [samples gallery](/samples) and the [official documentation](https://microsoft.github.io/presidio/) for more patterns.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="What are the main building blocks in Presidio?">
+    Presidio is composed of several independent packages:
+
+    | Package | Purpose |
+    | --- | --- |
+    | **Presidio Analyzer** | Detects PII entities in natural language text |
+    | **Presidio Anonymizer** | Manipulates detected PII (redact, replace, hash, encrypt, and more) |
+    | **Presidio Image Redactor** | Detects and redacts PII in images using OCR |
+    | **Presidio Structured** | Detects and anonymizes PII in structured/tabular data (DataFrames, JSON) |
+
+    Each package can be used standalone or combined. All packages are also available as Docker images that expose REST APIs.
+  </Accordion>
+
+  <Accordion title="How do I detect PII in multiple languages?">
+    Presidio supports multiple languages through language-specific spaCy models and configurable recognizers.
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    # Configure NLP engine with multiple language models
+    configuration = {
+        "nlp_engine_name": "spacy",
+        "models": [
+            {"lang_code": "en", "model_name": "en_core_web_lg"},
+            {"lang_code": "es", "model_name": "es_core_news_md"},
+        ],
+    }
+
+    provider = NlpEngineProvider(nlp_configuration=configuration)
+    nlp_engine = provider.create_engine()
+
+    analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en", "es"])
+
+    results = analyzer.analyze(text="Me llamo Juan García", language="es")
+    ```
+
+    See the [languages documentation](https://microsoft.github.io/presidio/analyzer/languages/) for guidance on adding support for additional languages.
+  </Accordion>
+
+  <Accordion title="How do I add a custom entity type?">
+    You can add custom recognizers in several ways — using regex patterns, deny lists, or custom Python logic:
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+
+    # Example: detect employee badge numbers like "EMP-12345"
+    pattern = Pattern(name="badge_pattern", regex=r"EMP-\d{5}", score=0.85)
+    recognizer = PatternRecognizer(
+        supported_entity="EMPLOYEE_ID",
+        patterns=[pattern],
+        context=["employee", "badge", "staff id"],
+    )
+
+    analyzer = AnalyzerEngine()
+    analyzer.registry.add_recognizer(recognizer)
+
+    results = analyzer.analyze(text="Employee EMP-12345 reported the issue", language="en")
+    ```
+
+    For more advanced cases (ML-based recognizers, remote recognizers), see the [adding recognizers documentation](https://microsoft.github.io/presidio/analyzer/adding_recognizers/).
+  </Accordion>
+
+  <Accordion title="How do I use my own NLP model?">
+    Presidio uses spaCy by default, but you can configure it with any NLP backend:
+
+    ```python
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    # Use a different spaCy model
+    configuration = {
+        "nlp_engine_name": "spacy",
+        "models": [{"lang_code": "en", "model_name": "en_core_web_trf"}],
+    }
+
+    # Or use a HuggingFace transformers model
+    configuration = {
+        "nlp_engine_name": "transformers",
+        "models": [
+            {
+                "lang_code": "en",
+                "model_name": {
+                    "spacy": "en_core_web_sm",
+                    "transformers": "dslim/bert-base-NER",
+                },
+            }
+        ],
+    }
+
+    provider = NlpEngineProvider(nlp_configuration=configuration)
+    nlp_engine = provider.create_engine()
+    ```
+
+    Stanza is also supported via the `spacy-stanza` package. See the [NLP model configuration docs](https://microsoft.github.io/presidio/analyzer/customizing_nlp_models/) for complete options.
+  </Accordion>
+
+  <Accordion title="How do I process large batches of text efficiently?">
+    Use `BatchAnalyzerEngine` and `BatchAnonymizerEngine` for processing lists or iterables of text:
+
+    ```python
+    from presidio_analyzer import BatchAnalyzerEngine, DictAnalyzerResult
+    from presidio_anonymizer import BatchAnonymizerEngine
+
+    batch_analyzer = BatchAnalyzerEngine()
+    batch_anonymizer = BatchAnonymizerEngine()
+
+    texts = ["My name is Alice", "Call me at 555-1234", "My SSN is 123-45-6789"]
+    results = batch_analyzer.analyze_iterator(texts, language="en")
+    anonymized = batch_anonymizer.anonymize_list(texts, results)
+    ```
+
+    For very large datasets, consider the [PySpark integration](/samples#spark--azure-databricks) to distribute processing across a cluster.
+  </Accordion>
+
+  <Accordion title="How do I use Presidio with PySpark?">
+    Presidio provides a Spark-compatible integration for distributed processing of large datasets on Apache Spark and Azure Databricks.
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import StringType
+    import pandas as pd
+
+    analyzer = AnalyzerEngine()
+
+    # Use a UDF to apply Presidio across a Spark DataFrame column
+    def analyze_and_anonymize(text):
+        if not text:
+            return text
+        from presidio_anonymizer import AnonymizerEngine
+        anonymizer = AnonymizerEngine()
+        results = analyzer.analyze(text=text, language="en")
+        return anonymizer.anonymize(text=text, analyzer_results=results).text
+
+    udf_anonymize = F.udf(analyze_and_anonymize, StringType())
+    df_anonymized = df.withColumn("anonymized_text", udf_anonymize(F.col("text")))
+    ```
+
+    See the [Spark deployment sample](https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/spark/index.md) for production-ready patterns including broadcast variables for model sharing.
+  </Accordion>
+
+  <Accordion title="How do I integrate with Azure AI Language or Azure Health Data Services?">
+    Both services can be wrapped as remote recognizers and plugged into Presidio:
+
+    - **Azure AI Language**: See the [Azure AI Language integration sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/text_analytics/index.md) for a full implementation that calls the Language Service PII endpoint and maps results to Presidio entities.
+    - **Azure Health Data Services**: See the [AHDS integration sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/ahds/index.md) for detecting PHI in clinical text and integrating it into Presidio's pipeline.
+
+    Both integrations allow you to run the cloud service and Presidio's built-in recognizers in parallel, with merged and de-duplicated results.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Anonymization
+
+<AccordionGroup>
+  <Accordion title="What anonymization operators are available?">
+    Presidio Anonymizer ships with the following built-in operators:
+
+    | Operator | Description |
+    | --- | --- |
+    | `replace` | Replaces the entity with a placeholder string (e.g., `<PERSON>`) |
+    | `redact` | Removes the entity text entirely |
+    | `hash` | Replaces the entity with a hash of its value |
+    | `encrypt` | Encrypts the entity value using AES-CBC; decryptable with the same key |
+    | `mask` | Replaces part of the entity with a masking character (e.g., `****1234`) |
+    | `custom` | Applies a user-supplied lambda function to transform the entity value |
+    | `keep` | Keeps the entity value unchanged (useful for allow-listing specific entities) |
+
+    You can also implement custom operators. See the [adding operators documentation](https://microsoft.github.io/presidio/anonymizer/adding_operators/).
+  </Accordion>
+
+  <Accordion title="How do I decrypt or de-anonymize text?">
+    When using the `encrypt` operator, Presidio stores the encrypted values and can reverse the process using the same encryption key:
+
+    ```python
+    from presidio_anonymizer import AnonymizerEngine, DeanonymizeEngine
+    from presidio_anonymizer.entities import OperatorConfig
+
+    anonymizer = AnonymizerEngine()
+    deanonymizer = DeanonymizeEngine()
+
+    encryption_key = "WmZq4t7w!z%C&F)J"
+
+    # Anonymize with encryption
+    anonymized = anonymizer.anonymize(
+        text=original_text,
+        analyzer_results=results,
+        operators={"DEFAULT": OperatorConfig("encrypt", {"key": encryption_key})},
+    )
+
+    # Restore original text
+    deanonymized = deanonymizer.deanonymize(
+        text=anonymized.text,
+        entities=anonymized.items,
+        operators={"DEFAULT": OperatorConfig("decrypt", {"key": encryption_key})},
+    )
+    ```
+
+    See the [encrypt/decrypt sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/encrypt_decrypt.ipynb) for a complete walkthrough.
+  </Accordion>
+
+  <Accordion title="How does the hash operator work?">
+    The `hash` operator replaces a detected entity value with a cryptographic hash of that value. This means the same input string always produces the same hash, which can be useful for consistent pseudonymization.
+
+    ```python
+    from presidio_anonymizer.entities import OperatorConfig
+
+    operators = {
+        "PERSON": OperatorConfig("hash", {"hash_type": "sha256"}),
+    }
+    ```
+
+    Supported hash types: `md5`, `sha256`, `sha512`.
+
+    <Warning>
+      **Breaking change in Presidio 2.2.361**: The hash operator output format changed. Hashes generated before version 2.2.361 are not compatible with hashes generated after. If you rely on hash consistency across versions, pin your Presidio version or rehash your data after upgrading.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="How does Presidio handle overlapping PII entities?">
+    When two recognizers detect overlapping spans (e.g., a phone number inside an address), Presidio applies a conflict resolution strategy:
+
+    - By default, the entity with the **higher confidence score** is kept.
+    - If scores are equal, the **longer span** is preferred.
+    - You can configure a custom conflict resolution strategy by passing a `ConflictResolutionStrategy` to the `AnalyzerEngine`.
+
+    Overlapping and contained spans are resolved before results are passed to the anonymizer, ensuring clean, non-overlapping output.
+  </Accordion>
+
+  <Accordion title="Can Presidio be used for pseudonymization?">
+    Yes. Pseudonymization replaces real values with consistent fake values in a reversible way. Presidio supports several approaches:
+
+    - **Encrypt operator**: Fully reversible, AES-CBC encryption. Decrypt with the same key.
+    - **Custom lambda operator**: Apply any transformation, including using the [Faker](https://faker.readthedocs.io/) library to generate realistic synthetic values.
+    - **Mapping-based pseudonymization**: Maintain a lookup table mapping real values to fake ones for cross-document consistency.
+
+    See the [pseudonymization sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/pseudonymization.ipynb) and the [custom lambda anonymizer sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/example_custom_lambda_anonymizer.py).
+  </Accordion>
+
+  <Accordion title="Does Presidio work on structured or tabular data?">
+    Yes. The `presidio-structured` package extends Presidio to handle structured and semi-structured data:
+
+    ```bash
+    pip install presidio-structured
+    ```
+
+    ```python
+    from presidio_structured import StructuredEngine, PandasAnalysisBuilder
+    import pandas as pd
+
+    df = pd.DataFrame({"name": ["Alice Smith"], "email": ["alice@example.com"]})
+
+    structured_engine = StructuredEngine()
+    analysis = PandasAnalysisBuilder().generate_analysis(df, language="en")
+    anonymized_df = structured_engine.anonymize(df, analysis)
+    ```
+
+    Presidio Structured can scan datasets for PII and redact at the text, cell, or column level. It also supports JSON and other structured formats.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Improving detection accuracy
+
+<AccordionGroup>
+  <Accordion title="What can I do if Presidio misses PII entities (false negatives)?">
+    Presidio ships with recognizers for [many common entity types](/supported-entities), but no recognizer set is exhaustive for every domain and dataset.
+
+    Steps to reduce false negatives:
+    1. **Add custom recognizers** for entity types specific to your data (e.g., internal ID formats, proprietary codes).
+    2. **Use a higher-quality NLP model** — a larger or domain-specific spaCy or transformers model may catch more named entities.
+    3. **Add context words** to existing recognizers to boost confidence for domain-specific text.
+    4. **Integrate a third-party service** (Azure AI Language, Amazon Comprehend) as a remote recognizer to supplement built-in detection.
+    5. **Lower the acceptance threshold** to return more candidate detections (at the cost of more false positives).
+  </Accordion>
+
+  <Accordion title="What can I do if Presidio falsely detects non-PII text (false positives)?">
+    False positives occur when a recognizer pattern matches text that is not actually PII. This is especially common for short numeric recognizers (driver's licenses, bank numbers) that can match arbitrary numbers.
+
+    Steps to reduce false positives:
+    1. **Raise the acceptance threshold** so only high-confidence detections are returned.
+    2. **Remove unused recognizers** — if your dataset doesn't contain certain entity types, remove those recognizers from the registry.
+    3. **Tighten recognizer patterns** or add validation logic to reduce spurious matches.
+    4. **Add a deny list of known non-PII values** that should never be flagged.
+    5. **Use context words** — recognizers that require surrounding context are less prone to false positives.
+
+    There is always a trade-off between false positives and false negatives; tuning for one will affect the other.
+  </Accordion>
+
+  <Accordion title="How can I evaluate the performance of my Presidio instance?">
+    Microsoft maintains a separate evaluation repository, [presidio-research](https://github.com/microsoft/presidio-research), which provides:
+    - Tools for evaluating recognizer precision and recall against labeled datasets
+    - A synthetic PII data generator for creating test sets
+    - Benchmarking utilities for comparing model configurations
+
+    Use this repository to measure and iterate on recognizer performance before deploying to production.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Deployment
+
+<AccordionGroup>
+  <Accordion title="Can I run Presidio as a REST API?">
+    Yes. All main Presidio modules (Analyzer, Anonymizer, Image Redactor) are available as Docker images that expose REST APIs:
+
+    ```bash
+    # Pull and run the Analyzer API
+    docker run -p 5001:3000 mcr.microsoft.com/presidio-analyzer:latest
+
+    # Pull and run the Anonymizer API
+    docker run -p 5002:3000 mcr.microsoft.com/presidio-anonymizer:latest
+    ```
+
+    A Docker Compose file for running both services together is provided in the [Docker sample](https://github.com/microsoft/presidio/blob/main/docs/samples/docker/index.md).
+
+    <Warning>
+      Presidio API endpoints do not include built-in authentication by design. Authentication and authorization must be implemented at the infrastructure layer (API gateway, reverse proxy, or service mesh). Do not expose Presidio services directly to untrusted networks.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="How do I deploy Presidio on Kubernetes?">
+    The [Kubernetes deployment sample](https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/k8s/index.md) provides Helm charts and Kubernetes manifests for deploying Presidio at scale.
+
+    Key considerations:
+    - The NLP models (spaCy, transformers) are loaded at container startup — allow sufficient memory per pod
+    - Use resource limits and requests to avoid OOM issues
+    - Implement authentication at the ingress or API gateway layer
+    - Use horizontal pod autoscaling if you need to handle variable load
+  </Accordion>
+
+  <Accordion title="How do I deploy Presidio with Spark or Azure Databricks?">
+    See the [Spark deployment sample](https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/spark/index.md) for a production-ready pattern.
+
+    Key points:
+    - Install Presidio packages on each cluster node (or include in a custom Docker image)
+    - Use Spark broadcast variables to share the `AnalyzerEngine` instance across partitions — avoid re-initializing per row
+    - Use pandas UDFs (vectorized UDFs) for better performance than row-level Python UDFs
+    - Azure Databricks notebooks with the full setup are included in the sample
+  </Accordion>
+
+  <Accordion title="Is there GPU support?">
+    GPU support depends on the NLP backend you configure:
+    - **spaCy transformer models** (`en_core_web_trf`) can use GPU via `cupy` if available
+    - **HuggingFace transformers** models use GPU automatically when `torch` detects CUDA
+    - Standard spaCy models (`en_core_web_lg`, etc.) run on CPU only
+
+    Configure your Docker or Kubernetes deployment with GPU node selectors and the appropriate CUDA base image if you need GPU acceleration. There is no built-in GPU configuration in Presidio itself — this is handled by the underlying ML framework.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Contributing
+
+<AccordionGroup>
+  <Accordion title="How can I contribute to Presidio?">
+    Contributions are welcome. To get started:
+    1. Review the [contribution guidelines](https://github.com/microsoft/presidio/blob/main/CONTRIBUTING.md).
+    2. Open a GitHub issue to discuss the change before submitting a pull request.
+    3. For questions or discussions, open a GitHub Discussion or email the team at [presidio@microsoft.com](mailto:presidio@microsoft.com).
+  </Accordion>
+
+  <Accordion title="How do I report a security vulnerability?">
+    Do not report security vulnerabilities through public GitHub issues. Follow the instructions in the [security policy](https://github.com/microsoft/presidio/blob/main/SECURITY.md) to report issues through Microsoft's coordinated disclosure process.
+  </Accordion>
+</AccordionGroup>

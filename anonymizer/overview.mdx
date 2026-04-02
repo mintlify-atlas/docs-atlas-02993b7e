@@ -1,0 +1,197 @@
+---
+title: 'Anonymizer overview'
+description: 'Apply PII redaction operators to analyzer results using Presidio Anonymizer — including replace, redact, mask, hash, encrypt, and custom operators.'
+keywords: ['presidio', 'anonymizer', 'PII', 'redact', 'anonymize', 'deanonymize', 'operators']
+---
+
+The Presidio Anonymizer is a Python-based module for anonymizing PII entities detected by the Presidio Analyzer. It takes analyzer results and applies **operators** — text manipulation functions — to replace, redact, mask, hash, or encrypt the detected PII.
+
+## Main classes
+
+| Class | Description |
+|---|---|
+| `AnonymizerEngine` | Anonymizes text using `RecognizerResult` objects from the Analyzer. |
+| `DeanonymizeEngine` | Reverses anonymization for operations that support it (e.g. decrypt). |
+| `BatchAnonymizerEngine` | Processes multiple texts or dicts in bulk. |
+| `OperatorConfig` | Specifies which operator to apply to a given entity type, and its parameters. |
+| `EngineResult` | Returned by `anonymize()` — contains the anonymized text and a list of `OperatorResult` items. |
+| `OperatorResult` | Describes a single anonymized span: entity type, start, end, replacement text, and operator used. |
+
+## `AnonymizerEngine.anonymize()`
+
+The main entry point for anonymization:
+
+```python
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+
+engine = AnonymizerEngine()
+
+result = engine.anonymize(
+    text="My name is Bond, James Bond",
+    analyzer_results=[
+        RecognizerResult(entity_type="PERSON", start=11, end=15, score=0.8),
+        RecognizerResult(entity_type="PERSON", start=17, end=27, score=0.8),
+    ],
+    operators={"PERSON": OperatorConfig("replace", {"new_value": "BIP"})},
+)
+
+print(result)
+# text: My name is BIP, BIP.
+# items: [{'start': 16, 'end': 19, 'entity_type': 'PERSON', 'text': 'BIP', 'operator': 'replace'}, ...]
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `text` | `str` | The original text to anonymize. |
+| `analyzer_results` | `List[RecognizerResult]` | PII spans detected by `AnalyzerEngine.analyze()`. |
+| `operators` | `Dict[str, OperatorConfig]` | Map of entity type to operator. Use `"DEFAULT"` as a catch-all. |
+| `conflict_resolution` | `ConflictResolutionStrategy` | How to handle overlapping entity spans. |
+
+<Note>
+If `operators` is empty or has no `"DEFAULT"` key, the default operator is `replace` with the entity type as the replacement value (e.g. `<PHONE_NUMBER>`).
+</Note>
+
+### Using results from `AnalyzerEngine`
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig
+
+analyzer = AnalyzerEngine()
+anonymizer = AnonymizerEngine()
+
+text = "John Smith's phone number is 212-555-5555"
+analyzer_results = analyzer.analyze(text=text, language="en")
+
+anonymized = anonymizer.anonymize(
+    text=text,
+    analyzer_results=analyzer_results,
+    operators={
+        "PERSON": OperatorConfig("replace", {"new_value": "<NAME>"}),
+        "PHONE_NUMBER": OperatorConfig("mask", {"masking_char": "*", "chars_to_mask": 4, "from_end": True}),
+        "DEFAULT": OperatorConfig("redact"),
+    }
+)
+
+print(anonymized.text)
+```
+
+### `EngineResult` structure
+
+```python
+result.text   # The anonymized string
+result.items  # List of OperatorResult — one per anonymized span
+
+# Each OperatorResult:
+item.entity_type  # e.g. "PERSON"
+item.start        # Start offset in the anonymized text
+item.end          # End offset in the anonymized text
+item.text         # The replacement value (e.g. "BIP")
+item.operator     # Operator name used (e.g. "replace")
+```
+
+## `DeanonymizeEngine.deanonymize()`
+
+For reversible operators like `encrypt`, you can recover the original text using `DeanonymizeEngine`:
+
+```python
+from presidio_anonymizer import AnonymizerEngine, DeanonymizeEngine
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig, OperatorResult
+
+# Step 1: Anonymize with encryption
+anonymizer = AnonymizerEngine()
+result = anonymizer.anonymize(
+    text="My name is James Bond",
+    analyzer_results=[
+        RecognizerResult(entity_type="PERSON", start=11, end=21, score=0.85)
+    ],
+    operators={"PERSON": OperatorConfig("encrypt", {"key": "WmZq4t7w!z%C&F)J"})}
+)
+print(result.text)
+# My name is S184CMt9Drj7QaKQ21JTrpYzghnboTF9pn/neN8JME0=
+
+# Step 2: Deanonymize
+deanonymizer = DeanonymizeEngine()
+decrypted = deanonymizer.deanonymize(
+    text=result.text,
+    entities=[OperatorResult(start=11, end=55, entity_type="PERSON")],
+    operators={"DEFAULT": OperatorConfig("decrypt", {"key": "WmZq4t7w!z%C&F)J"})},
+)
+print(decrypted.text)
+# My name is James Bond
+```
+
+## `BatchAnonymizerEngine`
+
+For bulk processing of multiple texts or dictionaries:
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.batch_anonymizer_engine import BatchAnonymizerEngine
+
+batch_anonymizer = BatchAnonymizerEngine(
+    anonymizer_engine=AnonymizerEngine()
+)
+```
+
+See the [batch processing sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/batch_processing.ipynb) for full usage examples.
+
+## `OperatorConfig`
+
+`OperatorConfig` tells the engine which operator to use for each entity type and provides operator-specific parameters:
+
+```python
+from presidio_anonymizer.entities import OperatorConfig
+
+# Replace PERSON with a fixed string
+OperatorConfig("replace", {"new_value": "REDACTED"})
+
+# Redact PHONE_NUMBER completely
+OperatorConfig("redact")
+
+# Mask the last 4 digits of credit card numbers
+OperatorConfig("mask", {"masking_char": "*", "chars_to_mask": 4, "from_end": True})
+
+# Encrypt using AES
+OperatorConfig("encrypt", {"key": "WmZq4t7w!z%C&F)J"})
+
+# Hash with SHA-256
+OperatorConfig("hash", {"hash_type": "sha256"})
+
+# Custom lambda
+OperatorConfig("custom", {"lambda": lambda x: x[:2] + "***"})
+```
+
+The `operators` dict can use entity type names as keys and `"DEFAULT"` as a catch-all:
+
+```python
+operators = {
+    "PERSON": OperatorConfig("replace", {"new_value": "NAME"}),
+    "PHONE_NUMBER": OperatorConfig("redact"),
+    "DEFAULT": OperatorConfig("replace"),  # applies to all other entity types
+}
+```
+
+## Handling overlapping entities
+
+When the analyzer returns overlapping spans:
+
+- **Full overlap** — the entity with the higher score is used.
+- **One PII contained in another** — the larger span is used.
+- **Partial intersection** — each is anonymized individually and the results are concatenated.
+
+## Learn more
+
+<CardGroup cols={2}>
+  <Card title="Operators" icon="wrench" href="/anonymizer/operators">
+    Full reference for all built-in operators: replace, redact, mask, hash, encrypt, custom, and keep.
+  </Card>
+  <Card title="Analyzer overview" icon="magnifying-glass" href="/analyzer/overview">
+    Learn how the Analyzer detects PII entities to feed into the Anonymizer.
+  </Card>
+</CardGroup>

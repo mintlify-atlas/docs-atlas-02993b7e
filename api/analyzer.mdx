@@ -1,0 +1,674 @@
+---
+title: "Analyzer API Reference"
+description: "Full Python API reference for the presidio-analyzer package."
+---
+
+The `presidio-analyzer` package is the core detection layer of Presidio. It orchestrates NLP pipelines and a registry of recognizers to identify PII entities in text.
+
+## AnalyzerEngine
+
+The main entry point for PII detection. `AnalyzerEngine` coordinates the NLP engine, recognizer registry, and context-aware enhancement to produce `RecognizerResult` objects from raw text.
+
+```python
+from presidio_analyzer import AnalyzerEngine
+
+analyzer = AnalyzerEngine()
+results = analyzer.analyze(text="My name is John and my phone is 212-555-5555", language="en")
+print(results)
+```
+
+### Constructor
+
+<ParamField path="registry" type="RecognizerRegistry" default="None">
+  An instance of `RecognizerRegistry`. If not provided, a default registry is created automatically using `RecognizerRegistryProvider`.
+</ParamField>
+
+<ParamField path="nlp_engine" type="NlpEngine" default="None">
+  An instance of an NLP engine (e.g. `SpacyNlpEngine`). If not provided, the default spaCy engine is created via `NlpEngineProvider`.
+</ParamField>
+
+<ParamField path="app_tracer" type="AppTracer" default="None">
+  An instance of `AppTracer` used to trace the logic during each request for interpretability. If not provided, a default `AppTracer` is created.
+</ParamField>
+
+<ParamField path="log_decision_process" type="bool" default="False">
+  Whether to log the decision process within the analyzer for each request.
+</ParamField>
+
+<ParamField path="default_score_threshold" type="float" default="0">
+  Minimum confidence value for detected entities to be returned. Entities below this threshold are filtered out.
+</ParamField>
+
+<ParamField path="supported_languages" type="List[str]" default='["en"]'>
+  List of language codes this engine will support. Used to load the appropriate NLP models and recognizers.
+</ParamField>
+
+<ParamField path="context_aware_enhancer" type="ContextAwareEnhancer" default="None">
+  An instance of `ContextAwareEnhancer` for boosting confidence scores based on surrounding context words. Defaults to `LemmaContextAwareEnhancer` if not provided.
+</ParamField>
+
+---
+
+### `analyze`
+
+Find PII entities in text using all registered recognizers for the given language.
+
+```python
+results = analyzer.analyze(
+    text="Call me at 212-555-5555 or email john@example.com",
+    language="en",
+    entities=["PHONE_NUMBER", "EMAIL_ADDRESS"],
+    score_threshold=0.5,
+)
+```
+
+**Returns:** `List[RecognizerResult]`
+
+<ParamField path="text" type="str" required>
+  The text to analyze for PII entities.
+</ParamField>
+
+<ParamField path="language" type="str" required>
+  The ISO 639-1 language code of the input text (e.g. `"en"`, `"es"`, `"de"`).
+</ParamField>
+
+<ParamField path="entities" type="List[str]" default="None">
+  List of entity type names to detect (e.g. `["PERSON", "PHONE_NUMBER"]`). If `None`, all supported entities are detected.
+</ParamField>
+
+<ParamField path="correlation_id" type="str" default="None">
+  A cross-request correlation ID for tracing purposes.
+</ParamField>
+
+<ParamField path="score_threshold" type="float" default="None">
+  Minimum confidence score for a result to be returned. Overrides `default_score_threshold` set on the engine.
+</ParamField>
+
+<ParamField path="return_decision_process" type="bool" default="False">
+  Whether to include the `analysis_explanation` field in each `RecognizerResult`, describing why the entity was detected.
+</ParamField>
+
+<ParamField path="ad_hoc_recognizers" type="List[EntityRecognizer]" default="None">
+  Additional recognizers to use only for this specific request, without registering them globally.
+</ParamField>
+
+<ParamField path="context" type="List[str]" default="None">
+  A list of context words that can boost confidence scores when found near detected entities.
+</ParamField>
+
+<ParamField path="allow_list" type="List[str]" default="None">
+  A list of words or patterns that should not be flagged as PII. Matched results are removed from the output.
+</ParamField>
+
+<ParamField path="allow_list_match" type="str" default='"exact"'>
+  How items in `allow_list` are compared against detected text spans. Either `"exact"` (exact string match) or `"regex"` (regex pattern match).
+</ParamField>
+
+<ParamField path="regex_flags" type="int" default="re.DOTALL | re.MULTILINE | re.IGNORECASE">
+  Regex flags used when `allow_list_match` is `"regex"`.
+</ParamField>
+
+<ParamField path="nlp_artifacts" type="NlpArtifacts" default="None">
+  Pre-computed NLP artifacts. If provided, the NLP pipeline is skipped and these artifacts are used directly.
+</ParamField>
+
+---
+
+### `get_recognizers`
+
+Return all recognizers currently loaded in the engine.
+
+```python
+recognizers = analyzer.get_recognizers(language="en")
+```
+
+**Returns:** `List[EntityRecognizer]`
+
+<ParamField path="language" type="str" default="None">
+  If provided, return only recognizers that support this language code. If `None`, returns recognizers for all supported languages.
+</ParamField>
+
+---
+
+### `get_supported_entities`
+
+Return the list of entity types that can be detected by the currently loaded recognizers.
+
+```python
+entities = analyzer.get_supported_entities(language="en")
+print(entities)  # ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", ...]
+```
+
+**Returns:** `List[str]`
+
+<ParamField path="language" type="str" default="None">
+  If provided, return only entity types supported in this specific language.
+</ParamField>
+
+---
+
+## BatchAnalyzerEngine
+
+A wrapper around `AnalyzerEngine` for analyzing multiple texts efficiently — either as a list/iterator of strings or as a dictionary.
+
+```python
+from presidio_analyzer import AnalyzerEngine, BatchAnalyzerEngine
+
+batch_analyzer = BatchAnalyzerEngine()
+texts = ["My name is Alice", "Call me at 555-1234", "No PII here"]
+results = batch_analyzer.analyze_iterator(texts, language="en")
+```
+
+### Constructor
+
+<ParamField path="analyzer_engine" type="AnalyzerEngine" default="None">
+  The `AnalyzerEngine` instance to use. If not provided, a default engine is created automatically.
+</ParamField>
+
+---
+
+### `analyze_iterator`
+
+Analyze an iterable of strings and return a list of result lists.
+
+```python
+results = batch_analyzer.analyze_iterator(
+    texts=["Alice lives in New York", "Call 212-555-5555"],
+    language="en",
+    entities=["PERSON", "PHONE_NUMBER", "LOCATION"],
+)
+# results[0] -> results for "Alice lives in New York"
+# results[1] -> results for "Call 212-555-5555"
+```
+
+**Returns:** `List[List[RecognizerResult]]`
+
+<ParamField path="texts" type="Iterable[Union[str, bool, float, int]]" required>
+  An iterable of primitive values to analyze. Non-string types are converted with `str()`.
+</ParamField>
+
+<ParamField path="language" type="str" required>
+  The language code to use for analysis.
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="1">
+  Number of texts to process in a single NLP batch iteration.
+</ParamField>
+
+<ParamField path="n_process" type="int" default="1">
+  Number of parallel processes to use for NLP processing.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze` (e.g. `entities`, `score_threshold`, `context`).
+</ParamField>
+
+---
+
+### `analyze_dict`
+
+Analyze a dictionary of keys and values (or iterables of values). Nested dicts are processed recursively.
+
+```python
+input_dict = {
+    "name": "Alice Johnson",
+    "phone": "212-555-5555",
+    "age": 30,
+}
+results = batch_analyzer.analyze_dict(input_dict, language="en")
+for item in results:
+    print(item.key, item.recognizer_results)
+```
+
+**Returns:** `Iterator[DictAnalyzerResult]`
+
+<ParamField path="input_dict" type="Dict[str, Union[Any, Iterable[Any]]]" required>
+  The input dictionary to analyze. Values can be scalars, iterables, or nested dicts.
+</ParamField>
+
+<ParamField path="language" type="str" required>
+  The language code to use for analysis.
+</ParamField>
+
+<ParamField path="keys_to_skip" type="List[str]" default="None">
+  Keys in the dictionary to skip during analysis.
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="1">
+  Number of texts to process in a single NLP batch iteration.
+</ParamField>
+
+<ParamField path="n_process" type="int" default="1">
+  Number of parallel processes to use.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze`.
+</ParamField>
+
+---
+
+## RecognizerRegistry
+
+Holds and manages all PII recognizers used by the analyzer. You can add, remove, or load recognizers through this class.
+
+```python
+from presidio_analyzer import RecognizerRegistry, PatternRecognizer, Pattern
+
+registry = RecognizerRegistry()
+registry.load_predefined_recognizers()
+
+# Add a custom recognizer
+titles_recognizer = PatternRecognizer(
+    supported_entity="TITLE",
+    deny_list=["Mr.", "Mrs.", "Dr."],
+)
+registry.add_recognizer(titles_recognizer)
+```
+
+### Constructor
+
+<ParamField path="recognizers" type="Iterable[EntityRecognizer]" default="None">
+  An optional list of recognizers to load immediately. If not provided, the registry starts empty.
+</ParamField>
+
+<ParamField path="global_regex_flags" type="int" default="re.DOTALL | re.MULTILINE | re.IGNORECASE">
+  Regex flags applied to all pattern-based recognizers (including deny-lists) loaded into this registry.
+</ParamField>
+
+<ParamField path="supported_languages" type="List[str]" default='["en"]'>
+  List of language codes supported by this registry.
+</ParamField>
+
+---
+
+### `add_recognizer`
+
+Add a new recognizer to the registry.
+
+```python
+registry.add_recognizer(my_custom_recognizer)
+```
+
+<ParamField path="recognizer" type="EntityRecognizer" required>
+  The recognizer instance to add. Must be an instance of `EntityRecognizer`.
+</ParamField>
+
+---
+
+### `remove_recognizer`
+
+Remove a recognizer by name. Optionally filter by language when multiple recognizers share the same name.
+
+```python
+registry.remove_recognizer("SpacyRecognizer")
+registry.remove_recognizer("SpacyRecognizer", language="es")
+```
+
+<ParamField path="recognizer_name" type="str" required>
+  The `name` attribute of the recognizer(s) to remove.
+</ParamField>
+
+<ParamField path="language" type="str" default="None">
+  If provided, only the recognizer matching both the name and this language code is removed.
+</ParamField>
+
+---
+
+### `get_recognizers`
+
+Return recognizers that match the requested language and entities.
+
+```python
+recognizers = registry.get_recognizers(language="en", entities=["PHONE_NUMBER"])
+```
+
+**Returns:** `List[EntityRecognizer]`
+
+<ParamField path="language" type="str" required>
+  The language code to filter by.
+</ParamField>
+
+<ParamField path="entities" type="List[str]" default="None">
+  List of entity types to filter by. Required if `all_fields` is `False`.
+</ParamField>
+
+<ParamField path="all_fields" type="bool" default="False">
+  If `True`, return all recognizers for the given language regardless of entity type.
+</ParamField>
+
+<ParamField path="ad_hoc_recognizers" type="List[EntityRecognizer]" default="None">
+  Additional per-request recognizers to include in the returned list.
+</ParamField>
+
+---
+
+### `load_predefined_recognizers`
+
+Load all built-in Presidio recognizers into the registry.
+
+```python
+registry.load_predefined_recognizers(languages=["en", "es"])
+```
+
+<ParamField path="languages" type="List[str]" default="None">
+  Languages for which to load predefined recognizers. If `None`, uses the registry's `supported_languages`.
+</ParamField>
+
+<ParamField path="nlp_engine" type="NlpEngine" default="None">
+  The NLP engine instance used to initialize NLP-based recognizers like `SpacyRecognizer`.
+</ParamField>
+
+---
+
+## PatternRecognizer
+
+A recognizer that detects PII using regular expressions or deny-lists. Extends `LocalRecognizer`.
+
+```python
+from presidio_analyzer import PatternRecognizer, Pattern
+
+# Using a regex pattern
+credit_card_recognizer = PatternRecognizer(
+    supported_entity="CREDIT_CARD",
+    patterns=[Pattern(name="credit_card", regex=r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b", score=0.9)],
+)
+
+# Using a deny-list
+titles_recognizer = PatternRecognizer(
+    supported_entity="TITLE",
+    deny_list=["Mr.", "Mrs.", "Ms.", "Dr.", "Prof."],
+)
+```
+
+### Constructor
+
+<ParamField path="supported_entity" type="str" required>
+  The single PII entity type this recognizer detects (e.g. `"PHONE_NUMBER"`). PatternRecognizer supports exactly one entity type.
+</ParamField>
+
+<ParamField path="name" type="str" default="None">
+  A human-readable name for this recognizer. Defaults to the class name if not provided.
+</ParamField>
+
+<ParamField path="supported_language" type="str" default='"en"'>
+  The ISO 639-1 language code this recognizer supports.
+</ParamField>
+
+<ParamField path="patterns" type="List[Pattern]" default="None">
+  A list of `Pattern` objects defining regex patterns for detection.
+</ParamField>
+
+<ParamField path="deny_list" type="List[str]" default="None">
+  A list of exact words or phrases to detect. Converted internally to a regex pattern.
+</ParamField>
+
+<ParamField path="context" type="List[str]" default="None">
+  Context words that, when found near a match, increase the confidence score.
+</ParamField>
+
+<ParamField path="deny_list_score" type="float" default="1.0">
+  Confidence score assigned to matches from the deny-list.
+</ParamField>
+
+<ParamField path="global_regex_flags" type="int" default="re.DOTALL | re.MULTILINE | re.IGNORECASE">
+  Regex flags applied when compiling and matching patterns.
+</ParamField>
+
+<ParamField path="version" type="str" default='"0.0.1"'>
+  Version string for this recognizer.
+</ParamField>
+
+<Note>
+  Either `patterns` or `deny_list` must be provided — not both can be `None`.
+</Note>
+
+---
+
+### `Pattern`
+
+A data class representing a named regex pattern used by `PatternRecognizer`.
+
+```python
+from presidio_analyzer import Pattern
+
+ssn_pattern = Pattern(
+    name="ssn_pattern",
+    regex=r"\b\d{3}-\d{2}-\d{4}\b",
+    score=0.85,
+)
+```
+
+<ParamField path="name" type="str" required>
+  A descriptive name for this pattern (used in explanations and logging).
+</ParamField>
+
+<ParamField path="regex" type="str" required>
+  The regular expression string to match against input text.
+</ParamField>
+
+<ParamField path="score" type="float" required>
+  The confidence score (0.0–1.0) assigned to matches of this pattern.
+</ParamField>
+
+---
+
+## EntityRecognizer
+
+Abstract base class for all Presidio recognizers. Custom recognizers should extend this class (or the more specific `LocalRecognizer`) and implement `load` and `analyze`.
+
+```python
+from presidio_analyzer import EntityRecognizer, RecognizerResult
+from typing import List
+
+class MyCustomRecognizer(EntityRecognizer):
+    def load(self):
+        pass  # Load any models or resources here
+
+    def analyze(self, text, entities, nlp_artifacts=None):
+        results = []
+        if "SECRET" in text:
+            results.append(
+                RecognizerResult(entity_type="SECRET", start=text.index("SECRET"),
+                                 end=text.index("SECRET") + 6, score=0.9)
+            )
+        return results
+
+recognizer = MyCustomRecognizer(supported_entities=["SECRET"])
+```
+
+### Constructor
+
+<ParamField path="supported_entities" type="List[str]" required>
+  The list of PII entity types this recognizer can detect (e.g. `["PERSON", "LOCATION"]`).
+</ParamField>
+
+<ParamField path="name" type="str" default="None">
+  A name for this recognizer. Defaults to the class name.
+</ParamField>
+
+<ParamField path="supported_language" type="str" default='"en"'>
+  The ISO 639-1 language code this recognizer supports.
+</ParamField>
+
+<ParamField path="version" type="str" default='"0.0.1"'>
+  Version string for this recognizer.
+</ParamField>
+
+<ParamField path="context" type="List[str]" default="None">
+  A list of context words that boost confidence scores for this recognizer's results.
+</ParamField>
+
+### Key attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `supported_entities` | `List[str]` | Entity types this recognizer detects |
+| `supported_language` | `str` | Language code supported by this recognizer |
+| `name` | `str` | Recognizer name |
+| `version` | `str` | Recognizer version |
+| `id` | `str` | Unique identifier (auto-generated) |
+
+### `analyze` (abstract)
+
+```python
+def analyze(self, text: str, entities: List[str], nlp_artifacts: NlpArtifacts) -> List[RecognizerResult]:
+    ...
+```
+
+Must be implemented by subclasses. Returns a list of detected entities.
+
+<ParamField path="text" type="str" required>
+  The input text to analyze.
+</ParamField>
+
+<ParamField path="entities" type="List[str]" required>
+  The entity types this recognizer should look for.
+</ParamField>
+
+<ParamField path="nlp_artifacts" type="NlpArtifacts">
+  NLP pipeline artifacts (tokens, lemmas, etc.) computed by the NLP engine.
+</ParamField>
+
+---
+
+## RecognizerResult
+
+Represents a single detected PII entity in text — the output of the `analyze` call.
+
+```python
+from presidio_analyzer import RecognizerResult
+
+result = RecognizerResult(entity_type="PERSON", start=11, end=16, score=0.85)
+print(result)  # type: PERSON, start: 11, end: 16, score: 0.85
+
+as_dict = result.to_dict()
+```
+
+### Constructor
+
+<ParamField path="entity_type" type="str" required>
+  The type of the detected PII entity (e.g. `"PERSON"`, `"PHONE_NUMBER"`).
+</ParamField>
+
+<ParamField path="start" type="int" required>
+  The start character index (inclusive) of the detected entity in the original text.
+</ParamField>
+
+<ParamField path="end" type="int" required>
+  The end character index (exclusive) of the detected entity in the original text.
+</ParamField>
+
+<ParamField path="score" type="float" required>
+  Confidence score of the detection, between `0.0` and `1.0`.
+</ParamField>
+
+<ParamField path="analysis_explanation" type="AnalysisExplanation" default="None">
+  An optional object describing why the entity was detected. Populated when `return_decision_process=True` is passed to `AnalyzerEngine.analyze`.
+</ParamField>
+
+<ParamField path="recognition_metadata" type="Dict" default="None">
+  Metadata dictionary containing recognizer name and identifier. Keys include `"recognizer_name"` and `"recognizer_identifier"`.
+</ParamField>
+
+### Methods
+
+<ResponseField name="to_dict()" type="Dict">
+  Serialize the result to a dictionary (returns `self.__dict__`).
+</ResponseField>
+
+<ResponseField name="from_json(data: Dict)" type="RecognizerResult">
+  Class method. Create a `RecognizerResult` from a dictionary with keys `entity_type`, `start`, `end`, `score`.
+</ResponseField>
+
+<ResponseField name="intersects(other: RecognizerResult)" type="int">
+  Return the number of characters of overlap with another result. Returns `0` if they do not intersect.
+</ResponseField>
+
+<ResponseField name="contained_in(other: RecognizerResult)" type="bool">
+  Return `True` if this result's span is fully contained within `other`'s span.
+</ResponseField>
+
+---
+
+## AnalyzerEngineProvider
+
+A utility class for loading a fully configured `AnalyzerEngine` from YAML configuration files.
+
+```python
+from presidio_analyzer import AnalyzerEngineProvider
+
+provider = AnalyzerEngineProvider(
+    analyzer_engine_conf_file="analyzer_config.yaml",
+    nlp_engine_conf_file="nlp_config.yaml",
+    recognizer_registry_conf_file="registry_config.yaml",
+)
+analyzer = provider.create_engine()
+```
+
+### Constructor
+
+<ParamField path="analyzer_engine_conf_file" type="Union[Path, str]" default="None">
+  Path to a YAML file configuring the analyzer engine (e.g. `supported_languages`, `default_score_threshold`). If not provided, the built-in default configuration is used.
+</ParamField>
+
+<ParamField path="nlp_engine_conf_file" type="Union[Path, str]" default="None">
+  Path to a YAML file configuring the NLP engine (e.g. which spaCy model to use). If not provided, falls back to the analyzer config or the built-in default.
+</ParamField>
+
+<ParamField path="recognizer_registry_conf_file" type="Union[Path, str]" default="None">
+  Path to a YAML file configuring the recognizer registry (e.g. which recognizers to load). If not provided, falls back to the analyzer config.
+</ParamField>
+
+---
+
+### `create_engine`
+
+Instantiate and return a fully configured `AnalyzerEngine`.
+
+```python
+analyzer = provider.create_engine()
+results = analyzer.analyze(text="Hello, my name is John.", language="en")
+```
+
+**Returns:** `AnalyzerEngine`
+
+---
+
+## LemmaContextAwareEnhancer
+
+The default context-aware enhancement strategy. Compares lemmatized tokens surrounding a detected entity with the recognizer's declared context words, boosting the score if a match is found.
+
+```python
+from presidio_analyzer.context_aware_enhancers import LemmaContextAwareEnhancer
+
+enhancer = LemmaContextAwareEnhancer(
+    context_similarity_factor=0.35,
+    min_score_with_context_similarity=0.4,
+    context_prefix_count=5,
+    context_suffix_count=0,
+    context_matching_mode="whole_word",
+)
+```
+
+### Constructor
+
+<ParamField path="context_similarity_factor" type="float" default="0.35">
+  The amount added to the confidence score when a supportive context word is found.
+</ParamField>
+
+<ParamField path="min_score_with_context_similarity" type="float" default="0.4">
+  The minimum confidence score after context enhancement.
+</ParamField>
+
+<ParamField path="context_prefix_count" type="int" default="5">
+  Number of tokens before the detected entity to examine for context words.
+</ParamField>
+
+<ParamField path="context_suffix_count" type="int" default="0">
+  Number of tokens after the detected entity to examine for context words.
+</ParamField>
+
+<ParamField path="context_matching_mode" type="str" default='"substring"'>
+  How context words are matched against surrounding tokens. Either `"substring"` (default, backward-compatible: `"card"` matches `"creditcard"`) or `"whole_word"` (exact case-insensitive token match).
+</ParamField>

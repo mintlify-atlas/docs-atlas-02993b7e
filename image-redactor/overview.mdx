@@ -1,0 +1,196 @@
+---
+title: 'Image Redactor overview'
+description: 'Detect and redact PII from standard images and DICOM medical images using Presidio Image Redactor with OCR-based detection.'
+keywords: ['presidio', 'image redactor', 'OCR', 'DICOM', 'PII', 'redact', 'Tesseract']
+---
+
+<Warning>
+The Presidio Image Redactor package is still in beta and not production-ready.
+</Warning>
+
+The Presidio Image Redactor detects and redacts PII in images by combining OCR (Optical Character Recognition) with Presidio's text analysis pipeline. It supports:
+
+- **Standard images** (PNG, JPEG, etc.) via `ImageRedactorEngine`
+- **DICOM medical images** via `DicomImageRedactorEngine`
+- **Detection without redaction** via `ImageAnalyzerEngine`
+
+## Installation
+
+### Prerequisites
+
+Install [Tesseract OCR](https://github.com/tesseract-ocr/tesseract#installing-tesseract) for your operating system before installing the Python package.
+
+<Note>
+For best performance, use Tesseract OCR v5.2.0 or later. Presidio was tested against v5.2.0.
+</Note>
+
+```bash
+pip install presidio-image-redactor
+python -m spacy download en_core_web_lg
+```
+
+## `ImageRedactorEngine`
+
+`ImageRedactorEngine` takes a PIL `Image`, runs OCR to extract text and bounding boxes, runs PII detection on the extracted text, and paints filled rectangles over detected PII regions.
+
+### Basic redaction
+
+```python
+from PIL import Image
+from presidio_image_redactor import ImageRedactorEngine
+
+# Load the image
+image = Image.open("./document.png")
+
+# Initialize the engine
+engine = ImageRedactorEngine()
+
+# Redact PII — fill color is an RGB tuple or grayscale int (0–255)
+redacted_image = engine.redact(image, fill=(255, 192, 203))
+
+# Save the result
+redacted_image.save("redacted_document.png")
+```
+
+### Redact and return bounding boxes
+
+Use `redact_and_return_bbox` when you need the locations of the redacted regions:
+
+```python
+from PIL import Image
+from presidio_image_redactor import ImageRedactorEngine
+
+image = Image.open("./document.png")
+engine = ImageRedactorEngine()
+
+redacted_image, bboxes = engine.redact_and_return_bbox(image, fill=(0, 0, 0))
+
+redacted_image.save("redacted_document.png")
+
+for bbox in bboxes:
+    print(f"Redacted region: left={bbox.left}, top={bbox.top}, "
+          f"width={bbox.width}, height={bbox.height}")
+```
+
+### `redact()` parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `image` | `PIL.Image.Image` | Input image to redact. |
+| `fill` | `int` or `Tuple[int, int, int]` | Fill color — int for grayscale (0–255) or RGB tuple. |
+| `ocr_kwargs` | `dict` | Additional keyword arguments passed to the OCR engine. |
+| `ad_hoc_recognizers` | `List[PatternRecognizer]` | Extra pattern recognizers for this request only. |
+| `**text_analyzer_kwargs` | | Additional keyword arguments forwarded to `AnalyzerEngine.analyze()`. |
+
+## `DicomImageRedactorEngine`
+
+For DICOM medical images, use `DicomImageRedactorEngine`. It redacts pixel-level text PII from DICOM image data.
+
+<Warning>
+`DicomImageRedactorEngine` only redacts pixel data (burned-in text). It does **not** scrub PII from DICOM metadata tags. Redact pixel data before scrubbing metadata.
+</Warning>
+
+```python
+import pydicom
+from presidio_image_redactor import DicomImageRedactorEngine
+
+engine = DicomImageRedactorEngine()
+input_path = "path/to/your/dicom/file.dcm"
+output_dir = "./output"
+
+# Option 1: Redact from a loaded DICOM image object
+dicom_image = pydicom.dcmread(input_path)
+redacted_dicom_image = engine.redact(dicom_image, fill="contrast")
+
+# Option 2: Redact and return bounding boxes
+redacted_dicom_image, bboxes = engine.redact_and_return_bbox(
+    dicom_image, fill="contrast"
+)
+
+# Option 3: Redact from file and save (optionally save bbox JSON)
+engine.redact_from_file(
+    input_path, output_dir,
+    padding_width=25,
+    fill="contrast",
+    save_bboxes=True
+)
+
+# Option 4: Redact all DICOM files in a directory
+ocr_kwargs = {"ocr_threshold": 50}
+engine.redact_from_directory(
+    "path/to/your/dicom",
+    output_dir,
+    fill="background",
+    save_bboxes=True,
+    ocr_kwargs=ocr_kwargs
+)
+```
+
+## `ImageAnalyzerEngine`
+
+`ImageAnalyzerEngine` performs OCR and PII detection but does **not** apply redaction. Use it to inspect what would be redacted before committing:
+
+```python
+from PIL import Image
+from presidio_image_redactor import ImageAnalyzerEngine
+
+image = Image.open("./document.png")
+analyzer_engine = ImageAnalyzerEngine()
+
+bboxes = analyzer_engine.analyze(image, language="en")
+
+for bbox in bboxes:
+    print(f"Found PII: entity={bbox.entity_type}, "
+          f"left={bbox.left}, top={bbox.top}")
+```
+
+## Using Azure Document Intelligence OCR
+
+Presidio also supports Azure Document Intelligence as an alternative OCR engine, which can produce better results on complex documents:
+
+```python
+from presidio_image_redactor import ImageAnalyzerEngine, ImageRedactorEngine
+from presidio_image_redactor.document_intelligence_ocr import DocumentIntelligenceOCR
+
+# Set credentials via environment variables:
+# export DOCUMENT_INTELLIGENCE_ENDPOINT=<your_endpoint>
+# export DOCUMENT_INTELLIGENCE_KEY=<your_key>
+
+di_ocr = DocumentIntelligenceOCR()
+ia_engine = ImageAnalyzerEngine(ocr=di_ocr)
+engine = ImageRedactorEngine(image_analyzer_engine=ia_engine)
+```
+
+## Running as an HTTP server
+
+```bash
+# Using Docker
+docker run -p 5003:3000 mcr.microsoft.com/presidio-image-redactor:latest
+
+# Using Python (requires the Presidio repo to be cloned)
+cd presidio-image-redactor
+python app.py
+
+# Send a redaction request
+curl -XPOST "http://localhost:3000/redact" \
+  -H "content-type: multipart/form-data" \
+  -F "image=@document.png" \
+  -F "data=\"{'color_fill':'255'}\"" > redacted.png
+```
+
+## How it works
+
+<Steps>
+  <Step title="OCR">
+    The image is passed through Tesseract OCR (or Azure Document Intelligence), which extracts words and their bounding boxes.
+  </Step>
+  <Step title="PII detection">
+    The extracted text is analyzed by `AnalyzerEngine` to identify PII spans.
+  </Step>
+  <Step title="Bounding box mapping">
+    Detected PII text spans are mapped back to their pixel bounding boxes in the original image.
+  </Step>
+  <Step title="Redaction">
+    Filled rectangles are drawn over each bounding box to obscure the PII.
+  </Step>
+</Steps>

@@ -1,0 +1,286 @@
+---
+title: "Context-aware enhancement"
+description: "Use surrounding words to boost the confidence score of recognized PII entities in Presidio Analyzer."
+keywords: ["presidio", "context", "context-aware", "confidence score", "lemma", "enhancer"]
+---
+
+Context-aware enhancement improves PII detection accuracy by examining words near a candidate match. When a recognizer's **context words** appear in the surrounding text, the confidence score of the match is boosted. This lets you assign a low initial score to a pattern (reducing false positives in isolation) and rely on context to raise it when the surroundings confirm the entity type.
+
+For example, a 5-digit number might be a zip code or just a number. A regex alone can't know, but if the word "zip" or "postal" appears nearby, the score should be higher.
+
+---
+
+## How it works
+
+The enhancement runs after all recognizers have produced their raw results. For each result:
+
+1. The enhancer extracts surrounding words from the NLP-processed token stream (by default, up to 5 words before the match).
+2. It lemmatizes those words and compares them against the recognizer's `context` word list.
+3. If a supportive context word is found, the result score is boosted.
+
+The boost and minimum score are controlled by two parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `context_similarity_factor` | `0.35` | Amount added to the score when a context word matches. |
+| `min_score_with_context_similarity` | `0.4` | Minimum score after a context match (ensures a floor even if the raw score is very low). |
+| `context_prefix_count` | `5` | Number of tokens to look at before the matched entity. |
+| `context_suffix_count` | `0` | Number of tokens to look at after the matched entity. |
+
+The final boosted score is:
+
+```
+boosted_score = max(raw_score + context_similarity_factor, min_score_with_context_similarity)
+boosted_score = min(boosted_score, 1.0)
+```
+
+---
+
+## LemmaContextAwareEnhancer
+
+`LemmaContextAwareEnhancer` is the default enhancer. It uses spaCy lemmas from the `NlpArtifacts` object to normalize both the surrounding words and the context word list before comparing, so "licensed" matches a context word of "license".
+
+### Class signature
+
+```python
+# presidio_analyzer/context_aware_enhancers/lemma_context_aware_enhancer.py
+class LemmaContextAwareEnhancer(ContextAwareEnhancer):
+    def __init__(
+        self,
+        context_similarity_factor: float = 0.35,
+        min_score_with_context_similarity: float = 0.4,
+        context_prefix_count: int = 5,
+        context_suffix_count: int = 0,
+        context_matching_mode: str = "substring",
+    ):
+        ...
+```
+
+### Matching modes
+
+The `context_matching_mode` parameter controls how context words are matched against the surrounding text:
+
+| Mode | Behavior | Example |
+|------|----------|---------|
+| `"substring"` (default) | A context word matches if it appears anywhere within a surrounding token. | `"card"` matches `"creditcard"` |
+| `"whole_word"` | A context word matches only if it equals a surrounding token exactly (case-insensitive). | `"lic"` does not match `"duplicate"` |
+
+Use `"whole_word"` when your context words are short and could accidentally match unrelated tokens.
+
+---
+
+## Configuring the enhancer
+
+Pass a configured `LemmaContextAwareEnhancer` instance to `AnalyzerEngine`:
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.context_aware_enhancers import LemmaContextAwareEnhancer
+
+enhancer = LemmaContextAwareEnhancer(
+    context_similarity_factor=0.45,
+    min_score_with_context_similarity=0.5,
+    context_prefix_count=7,
+    context_suffix_count=2,
+    context_matching_mode="whole_word",
+)
+
+analyzer = AnalyzerEngine(context_aware_enhancer=enhancer)
+```
+
+<Note>
+  If you don't pass a `context_aware_enhancer`, `AnalyzerEngine` creates a `LemmaContextAwareEnhancer` with default parameters automatically.
+</Note>
+
+---
+
+## Adding context words to recognizers
+
+Attach context words to a recognizer via the `context` parameter. Any recognizer — `PatternRecognizer` or a custom `EntityRecognizer` — can have context words.
+
+### PatternRecognizer
+
+```python
+from presidio_analyzer import Pattern, PatternRecognizer
+
+zip_recognizer = PatternRecognizer(
+    supported_entity="ZIP_CODE",
+    patterns=[
+        Pattern(
+            name="zip code (weak)",
+            regex=r"(\b\d{5}(?:\-\d{4})?\b)",
+            score=0.01,  # low base score
+        )
+    ],
+    context=["zip", "code", "postal"],  # boosts score to 0.36+ when found nearby
+)
+```
+
+### Custom EntityRecognizer
+
+Pass `context` to the `super().__init__()` call:
+
+```python
+from presidio_analyzer import LocalRecognizer
+
+class MyRecognizer(LocalRecognizer):
+    def __init__(self):
+        super().__init__(
+            supported_entities=["MY_ENTITY"],
+            supported_language="en",
+            context=["account", "number", "id"],
+        )
+
+    def load(self):
+        pass
+
+    def analyze(self, text, entities, nlp_artifacts=None):
+        # detection logic here
+        ...
+```
+
+<Tip>
+  Keep context words short and lemma-friendly. Prefer root forms: `"license"` over `"licensed"`, `"card"` over `"cards"`. The enhancer lemmatizes surrounding text before matching.
+</Tip>
+
+---
+
+## Creating a custom ContextAwareEnhancer
+
+For advanced use cases — embedding similarity, external lookup, or cross-entity context — subclass `ContextAwareEnhancer` and implement `enhance_using_context`.
+
+### Abstract interface
+
+```python
+# presidio_analyzer/context_aware_enhancers/context_aware_enhancer.py
+class ContextAwareEnhancer:
+    def __init__(
+        self,
+        context_similarity_factor: float,
+        min_score_with_context_similarity: float,
+        context_prefix_count: int,
+        context_suffix_count: int,
+    ):
+        ...
+
+    @abstractmethod
+    def enhance_using_context(
+        self,
+        text: str,
+        raw_results: List[RecognizerResult],
+        nlp_artifacts: NlpArtifacts,
+        recognizers: List[EntityRecognizer],
+        context: Optional[List[str]] = None,
+    ) -> List[RecognizerResult]:
+        """
+        Update results based on context.
+
+        :param text: The analyzed text.
+        :param raw_results: Recognizer results before context enhancement.
+        :param nlp_artifacts: Tokens, lemmas, and other NLP outputs.
+        :param recognizers: The active recognizer list (for looking up context words).
+        :param context: Optional additional context words passed in the analyze() call.
+        :return: Updated list of RecognizerResult.
+        """
+        return raw_results
+```
+
+<Warning>
+  When boosting a score, set `result.recognition_metadata[RecognizerResult.IS_SCORE_ENHANCED_BY_CONTEXT_KEY] = True` to prevent double-boosting by the engine.
+</Warning>
+
+### Example: keyword-based enhancer
+
+```python
+import copy
+from typing import List, Optional
+
+from presidio_analyzer import EntityRecognizer, RecognizerResult
+from presidio_analyzer.context_aware_enhancers import ContextAwareEnhancer
+from presidio_analyzer.nlp_engine import NlpArtifacts
+
+
+class KeywordContextEnhancer(ContextAwareEnhancer):
+    """Boost score when a keyword from a fixed list appears in the raw text."""
+
+    def __init__(self, boost: float = 0.3, window: int = 50):
+        super().__init__(
+            context_similarity_factor=boost,
+            min_score_with_context_similarity=0.4,
+            context_prefix_count=5,
+            context_suffix_count=0,
+        )
+        self.window = window
+
+    def enhance_using_context(
+        self,
+        text: str,
+        raw_results: List[RecognizerResult],
+        nlp_artifacts: NlpArtifacts,
+        recognizers: List[EntityRecognizer],
+        context: Optional[List[str]] = None,
+    ) -> List[RecognizerResult]:
+        recognizer_map = {r.id: r for r in recognizers}
+        results = copy.deepcopy(raw_results)
+
+        for result in results:
+            # Skip if already boosted
+            if result.recognition_metadata.get(
+                RecognizerResult.IS_SCORE_ENHANCED_BY_CONTEXT_KEY
+            ):
+                continue
+
+            recognizer = recognizer_map.get(
+                result.recognition_metadata.get(
+                    RecognizerResult.RECOGNIZER_IDENTIFIER_KEY
+                )
+            )
+            if not recognizer or not recognizer.context:
+                continue
+
+            # Extract a text window around the match
+            start = max(0, result.start - self.window)
+            end = min(len(text), result.end + self.window)
+            window_text = text[start:end].lower()
+
+            for keyword in recognizer.context:
+                if keyword.lower() in window_text:
+                    result.score = min(
+                        result.score + self.context_similarity_factor,
+                        ContextAwareEnhancer.MAX_SCORE,
+                    )
+                    result.score = max(
+                        result.score, self.min_score_with_context_similarity
+                    )
+                    result.recognition_metadata[
+                        RecognizerResult.IS_SCORE_ENHANCED_BY_CONTEXT_KEY
+                    ] = True
+                    break
+
+        return results
+```
+
+Pass your custom enhancer to `AnalyzerEngine`:
+
+```python
+from presidio_analyzer import AnalyzerEngine
+
+enhancer = KeywordContextEnhancer(boost=0.4, window=80)
+analyzer = AnalyzerEngine(context_aware_enhancer=enhancer)
+```
+
+---
+
+## Passing context at analysis time
+
+You can also supply context words directly in the `analyze()` call. These words are treated as additional context for all recognizers and combined with the surrounding token context:
+
+```python
+results = analyzer.analyze(
+    text="Account number: 123456789",
+    language="en",
+    context=["account", "number"],
+)
+```
+
+This is useful when you know from the document structure (e.g., field name, section heading) that certain entities are more likely, even if those words don't appear in the immediate sentence.

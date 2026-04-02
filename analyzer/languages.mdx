@@ -1,0 +1,187 @@
+---
+title: 'Multi-language support'
+description: 'Configure Presidio Analyzer to detect PII in multiple languages by setting up NLP models and language-specific recognizers.'
+keywords: ['presidio', 'multi-language', 'languages', 'NLP', 'spaCy', 'multilingual', 'PII detection']
+---
+
+Presidio supports PII detection in multiple languages. By default, only English is configured. To add support for additional languages, you need to:
+
+1. Configure the `NlpEngine` with a model trained on the target language.
+2. Add or update recognizers with context words in the target language.
+
+<Note>
+Regular expression patterns are language-agnostic, but context words used to boost detection confidence are language-specific. Always update context words when adding a new language.
+</Note>
+
+## Configuring the NLP engine for multiple languages
+
+Download the spaCy models for each language you need:
+
+```bash
+python -m spacy download en_core_web_lg
+python -m spacy download es_core_news_md
+```
+
+Then configure `NlpEngineProvider` with all desired models:
+
+<CodeGroup>
+
+```python Via Python code
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+configuration = {
+    "nlp_engine_name": "spacy",
+    "models": [
+        {"lang_code": "en", "model_name": "en_core_web_lg"},
+        {"lang_code": "es", "model_name": "es_core_news_md"},
+    ],
+}
+
+provider = NlpEngineProvider(nlp_configuration=configuration)
+nlp_engine_with_spanish = provider.create_engine()
+
+analyzer = AnalyzerEngine(
+    nlp_engine=nlp_engine_with_spanish,
+    supported_languages=["en", "es"]
+)
+
+results_spanish = analyzer.analyze(text="Mi nombre es Morris", language="es")
+print(results_spanish)
+
+results_english = analyzer.analyze(text="My name is Morris", language="en")
+print(results_english)
+```
+
+```yaml Via YAML config file
+nlp_engine_name: spacy
+models:
+  - lang_code: en
+    model_name: en_core_web_lg
+  - lang_code: es
+    model_name: es_core_news_md
+ner_model_configuration:
+  labels_to_ignore:
+    - O
+  model_to_presidio_entity_mapping:
+    PER: PERSON
+    LOC: LOCATION
+    ORG: ORGANIZATION
+    DATE: DATE_TIME
+  low_confidence_score_multiplier: 0.4
+  low_score_entity_names:
+    - ID
+    - ORG
+```
+
+</CodeGroup>
+
+## Language-specific recognizers
+
+Each `EntityRecognizer` (and `PatternRecognizer`) is associated with a single `supported_language`. To support a language, you must have a recognizer for that language. For built-in recognizers such as `EmailRecognizer`, you can create separate instances for each language with different context words:
+
+```python
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+from presidio_analyzer.predefined_recognizers import EmailRecognizer
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+LANGUAGES_CONFIG_FILE = "./conf/languages-config.yml"
+
+provider = NlpEngineProvider(conf_file=LANGUAGES_CONFIG_FILE)
+nlp_engine_with_spanish = provider.create_engine()
+
+# English email recognizer with English context words
+email_recognizer_en = EmailRecognizer(
+    supported_language="en",
+    context=["email", "mail"]
+)
+
+# Spanish email recognizer with Spanish context words
+email_recognizer_es = EmailRecognizer(
+    supported_language="es",
+    context=["correo", "electrónico"]
+)
+
+registry = RecognizerRegistry()
+registry.add_recognizer(email_recognizer_en)
+registry.add_recognizer(email_recognizer_es)
+
+analyzer = AnalyzerEngine(
+    registry=registry,
+    supported_languages=["en", "es"],
+    nlp_engine=nlp_engine_with_spanish
+)
+
+results = analyzer.analyze(text="My name is David", language="en")
+print(results)
+```
+
+## Supported languages
+
+Presidio's built-in predefined recognizers primarily cover English. For other languages, detection quality depends on:
+
+- The NLP model available for that language.
+- Whether language-specific recognizers or context words have been added.
+
+The following languages have model support in spaCy and can be used with the `SpacyNlpEngine`:
+
+| Language | spaCy model example |
+|---|---|
+| English | `en_core_web_lg` |
+| Spanish | `es_core_news_md` |
+| German | `de_core_news_md` |
+| French | `fr_core_news_md` |
+| Portuguese | `pt_core_news_md` |
+| Italian | `it_core_news_md` |
+| Dutch | `nl_core_news_md` |
+| Chinese | `zh_core_web_md` |
+
+For a full list, see the [spaCy models page](https://spacy.io/usage/models) and [Stanza available NER models](https://stanfordnlp.github.io/stanza/available_models.html#available-ner-models).
+
+## Packaging NLP models in Docker
+
+When building a Docker container, models are downloaded automatically based on the configuration file. Update `presidio-analyzer/presidio_analyzer/conf/default.yaml` to specify which models to install:
+
+```yaml
+nlp_engine_name: spacy
+models:
+  - lang_code: en
+    model_name: en_core_web_lg
+  - lang_code: es
+    model_name: es_core_news_md
+```
+
+For transformer-based models, use the [transformers Dockerfile](https://github.com/microsoft/presidio/blob/main/presidio-analyzer/Dockerfile.transformers) and the corresponding [transformers YAML config](https://github.com/microsoft/presidio/blob/main/presidio-analyzer/presidio_analyzer/conf/transformers.yaml).
+
+## Multi-language analysis example
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+configuration = {
+    "nlp_engine_name": "spacy",
+    "models": [
+        {"lang_code": "en", "model_name": "en_core_web_lg"},
+        {"lang_code": "de", "model_name": "de_core_news_md"},
+    ],
+}
+
+provider = NlpEngineProvider(nlp_configuration=configuration)
+nlp_engine = provider.create_engine()
+
+analyzer = AnalyzerEngine(
+    nlp_engine=nlp_engine,
+    supported_languages=["en", "de"]
+)
+
+# English
+print(analyzer.analyze(text="My name is Alice", language="en"))
+
+# German
+print(analyzer.analyze(text="Mein Name ist Alice", language="de"))
+```
+
+<Tip>
+For best results in a new language, also review and update the `context` word lists for each recognizer you plan to use. Context words are language-specific and directly impact confidence scores.
+</Tip>

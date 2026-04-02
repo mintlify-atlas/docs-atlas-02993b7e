@@ -1,0 +1,145 @@
+---
+title: 'Quickstart: image redaction'
+description: 'Detect and redact PII in raster images and DICOM medical images using presidio-image-redactor.'
+keywords: ['presidio', 'image', 'redact', 'DICOM', 'OCR', 'Tesseract', 'quickstart']
+---
+
+This guide covers redacting PII from standard raster images and DICOM medical images using the `presidio-image-redactor` package.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install presidio-image-redactor">
+    ```bash
+    pip install presidio_image_redactor
+
+    # The image redactor depends on presidio-analyzer,
+    # which requires a spaCy language model:
+    python -m spacy download en_core_web_lg
+    ```
+  </Step>
+  <Step title="Install Tesseract OCR">
+    The default OCR engine is [Tesseract](https://github.com/tesseract-ocr/tesseract). Install it for your platform:
+
+    <CodeGroup>
+
+    ```bash Ubuntu / Debian
+    sudo apt-get install tesseract-ocr
+    ```
+
+    ```bash macOS (Homebrew)
+    brew install tesseract
+    ```
+
+    ```bash Windows
+    # Download the installer from:
+    # https://github.com/UB-Mannheim/tesseract/wiki
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Redact a standard image
+
+<Steps>
+  <Step title="Open the image">
+    Use Pillow to load any raster image (PNG, JPEG, etc.):
+
+    ```python
+    from PIL import Image
+
+    image = Image.open("path/to/your/image.png")
+    ```
+  </Step>
+  <Step title="Redact PII">
+    `ImageRedactorEngine.redact` detects text in the image using OCR, runs the Presidio analyzer on the extracted text, and paints filled rectangles over each detected PII region.
+
+    ```python
+    from presidio_image_redactor import ImageRedactorEngine
+    from PIL import Image
+
+    image = Image.open("path/to/your/image.png")
+
+    redactor = ImageRedactorEngine()
+    redacted_image = redactor.redact(image=image)
+
+    # Save or display the result
+    redacted_image.save("redacted.png")
+    ```
+  </Step>
+</Steps>
+
+## Redact a DICOM medical image
+
+Presidio provides a dedicated `DicomImageRedactorEngine` that handles DICOM pixel data and metadata.
+
+<Steps>
+  <Step title="Install pydicom">
+    ```bash
+    pip install pydicom
+    ```
+  </Step>
+  <Step title="Redact PII from a DICOM file">
+    <CodeGroup>
+
+    ```python From a loaded DICOM image
+    import pydicom
+    from presidio_image_redactor import DicomImageRedactorEngine
+
+    engine = DicomImageRedactorEngine()
+
+    dicom_image = pydicom.dcmread("path/to/your/dicom/file.dcm")
+    redacted_dicom_image = engine.redact(dicom_image, fill="contrast")
+    ```
+
+    ```python From a DICOM file path
+    from presidio_image_redactor import DicomImageRedactorEngine
+
+    engine = DicomImageRedactorEngine()
+
+    engine.redact_from_file(
+        "path/to/your/dicom/file.dcm",
+        "./output",
+        padding_width=25,
+        fill="contrast",
+    )
+    ```
+
+    ```python From a directory of DICOM files
+    from presidio_image_redactor import DicomImageRedactorEngine
+
+    engine = DicomImageRedactorEngine()
+
+    engine.redact_from_directory(
+        "path/to/your/dicom",
+        "./output",
+        padding_width=25,
+        fill="contrast",
+    )
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+<Note>
+  The `fill="contrast"` argument draws a high-contrast rectangle over detected PII regions. Use `fill="background"` to fill with the surrounding background color instead.
+</Note>
+
+## Docker
+
+You can also run the image redactor as a containerized REST service:
+
+```bash
+# Pull and run the container
+docker pull mcr.microsoft.com/presidio-image-redactor
+docker run -d -p 5003:3000 mcr.microsoft.com/presidio-image-redactor:latest
+
+# Send an image for redaction
+curl -XPOST "http://localhost:5003/redact" \
+  -H "content-type: multipart/form-data" \
+  -F "image=@img.png" \
+  -F "data=\"{'color_fill':'255'}\"" \
+  > out.png
+```

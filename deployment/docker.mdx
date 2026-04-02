@@ -1,0 +1,269 @@
+---
+title: 'Docker deployment'
+description: 'Run Presidio services as Docker containers using official Microsoft Container Registry images or build from source.'
+keywords: ['docker', 'docker-compose', 'container', 'presidio-analyzer', 'presidio-anonymizer', 'presidio-image-redactor']
+---
+
+Presidio exposes each module as a containerized REST service. You can pull official images from the Microsoft Container Registry (MCR) and run them individually or together with Docker Compose.
+
+## Prerequisites
+
+- [Docker Engine](https://docs.docker.com/get-docker/) 20.10 or later
+- [Docker Compose](https://docs.docker.com/compose/install/) v2 (included with Docker Desktop)
+
+## Pulling official images
+
+Official Presidio images are published to the Microsoft Container Registry under `mcr.microsoft.com`.
+
+```bash
+docker pull mcr.microsoft.com/presidio-analyzer:latest
+docker pull mcr.microsoft.com/presidio-anonymizer:latest
+docker pull mcr.microsoft.com/presidio-image-redactor:latest
+```
+
+## Running individual containers
+
+Each service listens on port `3000` inside the container. The commands below map each service to its conventional host port.
+
+<Steps>
+  <Step title="Run presidio-analyzer">
+    Analyzes text for PII entities. Exposed on host port **5002**.
+
+    ```bash
+    docker run -d -p 5002:3000 mcr.microsoft.com/presidio-analyzer:latest
+    ```
+  </Step>
+
+  <Step title="Run presidio-anonymizer">
+    Anonymizes and deanonymizes text. Exposed on host port **5001**.
+
+    ```bash
+    docker run -d -p 5001:3000 mcr.microsoft.com/presidio-anonymizer:latest
+    ```
+  </Step>
+
+  <Step title="Run presidio-image-redactor">
+    Redacts PII from images. Exposed on host port **5003**.
+
+    ```bash
+    docker run -d -p 5003:3000 mcr.microsoft.com/presidio-image-redactor:latest
+    ```
+  </Step>
+</Steps>
+
+## Docker Compose setup
+
+Use Docker Compose to run all services together. The following compose file is based on the official configuration in the Presidio repository.
+
+### Text services (analyzer + anonymizer)
+
+```yaml docker-compose-text.yml
+services:
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    environment:
+      - PORT=5001
+    ports:
+      - "5001:5001"
+
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    environment:
+      - PORT=5001
+    ports:
+      - "5002:5001"
+```
+
+```bash
+docker compose -f docker-compose-text.yml up -d
+```
+
+### Image redactor only
+
+```yaml docker-compose-image.yml
+services:
+  presidio-image-redactor:
+    image: mcr.microsoft.com/presidio-image-redactor:latest
+    environment:
+      - PORT=5001
+    ports:
+      - "5003:5001"
+```
+
+```bash
+docker compose -f docker-compose-image.yml up -d
+```
+
+### Full stack with Ollama (LLM-backed analysis)
+
+The full `docker-compose.yml` includes an [Ollama](https://ollama.com/) service that the analyzer can use for LLM-backed entity recognition. The analyzer waits for Ollama to be healthy before starting.
+
+```yaml docker-compose.yml
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    environment:
+      - PORT=5001
+    ports:
+      - "5001:5001"
+
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    environment:
+      - PORT=5001
+      - OLLAMA_HOST=http://ollama:11434
+    ports:
+      - "5002:5001"
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  presidio-image-redactor:
+    image: mcr.microsoft.com/presidio-image-redactor:latest
+    environment:
+      - PORT=5001
+    ports:
+      - "5003:5001"
+
+volumes:
+  ollama-data:
+```
+
+```bash
+docker compose up -d
+```
+
+<Note>
+  The Ollama service can take up to 5 minutes to pass its health check on first run while it initializes. The analyzer container will not start until Ollama is healthy.
+</Note>
+
+### Transformers NLP engine
+
+To run the analyzer with a HuggingFace Transformers NLP engine instead of spaCy, build from source using the dedicated Dockerfile:
+
+```yaml docker-compose-transformers.yml
+services:
+  presidio-anonymizer:
+    build:
+      context: ./presidio-anonymizer
+    environment:
+      - PORT=5001
+    ports:
+      - "5001:5001"
+
+  presidio-analyzer:
+    build:
+      context: ./presidio-analyzer
+      args:
+        - NLP_CONF_FILE=presidio_analyzer/conf/transformers.yaml
+      dockerfile: Dockerfile.transformers
+    environment:
+      - PORT=5001
+    ports:
+      - "5002:5001"
+```
+
+## Building from source
+
+Clone the repository and build images locally.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/microsoft/presidio.git
+    cd presidio
+    ```
+  </Step>
+
+  <Step title="Build and start all services">
+    From the root of the repository:
+
+    ```bash
+    docker compose up --build
+    ```
+  </Step>
+
+  <Step title="Build individual services">
+    To build and run a single service without Compose:
+
+    <CodeGroup>
+
+    ```bash presidio-analyzer
+    docker build ./presidio-analyzer -t presidio/presidio-analyzer
+    docker run -d -p 5002:3000 presidio/presidio-analyzer
+    ```
+
+    ```bash presidio-anonymizer
+    docker build ./presidio-anonymizer -t presidio/presidio-anonymizer
+    docker run -d -p 5001:5001 presidio/presidio-anonymizer
+    ```
+
+    ```bash presidio-image-redactor
+    docker build ./presidio-image-redactor -t presidio/presidio-image-redactor
+    docker run -d -p 5003:3000 presidio/presidio-image-redactor
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Environment variables
+
+| Variable | Service | Default | Description |
+|---|---|---|---|
+| `PORT` | All | `3000` | Port the Flask app listens on inside the container. |
+| `LOG_LEVEL` | Analyzer, Anonymizer | `WARNING` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `OLLAMA_HOST` | Analyzer | — | URL of the Ollama service for LLM-backed recognition (e.g. `http://ollama:11434`). |
+| `ANALYZER_CONF_FILE` | Analyzer | — | Path to a custom analyzer engine configuration file. |
+| `NLP_CONF_FILE` | Analyzer | — | Path to a custom NLP engine configuration file. |
+| `RECOGNIZER_REGISTRY_CONF_FILE` | Analyzer | — | Path to a custom recognizer registry configuration file. |
+| `BATCH_SIZE` | Analyzer | `500` | Maximum batch size for batch analysis requests. |
+| `N_PROCESS` | Analyzer | `1` | Number of parallel processes for batch analysis. |
+
+## Verifying the deployment
+
+Each service exposes a `/health` endpoint. Use `curl` to confirm the containers are running:
+
+<CodeGroup>
+
+```bash analyzer
+curl http://localhost:5002/health
+# Presidio Analyzer service is up
+```
+
+```bash anonymizer
+curl http://localhost:5001/health
+# Presidio Anonymizer service is up
+```
+
+```bash image-redactor
+curl http://localhost:5003/health
+# Presidio Image Redactor service is up
+```
+
+</CodeGroup>
+
+To run a quick end-to-end test against the analyzer:
+
+```bash
+curl -X POST http://localhost:5002/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"text": "His name is John Smith and his email is john@example.com", "language": "en"}'
+```
+
+A successful response returns a JSON array of detected entities with their type, position, and confidence score.

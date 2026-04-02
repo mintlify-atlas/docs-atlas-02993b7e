@@ -1,0 +1,179 @@
+---
+title: 'Analyzer overview'
+description: 'Detect PII entities in text using Presidio Analyzer — a Python-based service with regex, NER, and context-aware detection.'
+keywords: ['presidio', 'analyzer', 'PII detection', 'NLP', 'entity recognition']
+---
+
+The Presidio Analyzer is a Python-based service for detecting PII entities in unstructured text. It runs a set of _PII recognizers_ — each responsible for detecting one or more entities using regex patterns, Named Entity Recognition (NER), deny-lists, or custom logic.
+
+## Main classes
+
+The `AnalyzerEngine` orchestrates the entire detection pipeline. The diagram below shows how the core classes relate to each other:
+
+| Class | Role |
+|---|---|
+| `AnalyzerEngine` | Main entry point. Coordinates all other components. |
+| `RecognizerRegistry` | Holds the collection of active `EntityRecognizer` objects. |
+| `EntityRecognizer` | Base class for all recognizers (regex, ML, remote, etc.). |
+| `NlpEngine` | Runs an NLP model to produce tokens, lemmas, and NER results. |
+| `ContextAwareEnhancer` | Boosts confidence scores using surrounding context words. |
+| `RecognizerResult` | Holds the entity type, span, score, and optional trace for a detected PII instance. |
+
+### Class relationships
+
+- `AnalyzerEngine` owns one `RecognizerRegistry`, one `NlpEngine`, and one `ContextAwareEnhancer`.
+- `RecognizerRegistry` holds zero or more `EntityRecognizer` instances.
+- `NlpEngine` has three built-in implementations: `SpacyNlpEngine`, `TransformersNlpEngine`, and `StanzaNlpEngine`.
+- `ContextAwareEnhancer` has one built-in implementation: `LemmaContextAwareEnhancer`.
+
+## Basic usage
+
+```python
+from presidio_analyzer import AnalyzerEngine
+
+# Loads the default spaCy model and all predefined recognizers
+analyzer = AnalyzerEngine()
+
+# Analyze text and return a list of RecognizerResult objects
+results = analyzer.analyze(
+    text="My phone number is 212-555-5555",
+    entities=["PHONE_NUMBER"],
+    language="en"
+)
+print(results)
+```
+
+### `analyze()` parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `text` | `str` | Text to analyze. |
+| `language` | `str` | BCP-47 language code (e.g. `"en"`, `"es"`). |
+| `entities` | `List[str]` | Limit detection to these entity types. `None` means all entities. |
+| `score_threshold` | `float` | Minimum confidence score to return a result. |
+| `return_decision_process` | `bool` | Include an `analysis_explanation` in each result. |
+| `ad_hoc_recognizers` | `List[EntityRecognizer]` | Extra recognizers used only for this request. |
+| `context` | `List[str]` | Additional context words to boost confidence scores. |
+| `allow_list` | `List[str]` | Strings to exclude from results (exact or regex match). |
+| `allow_list_match` | `str` | `"exact"` (default) or `"regex"`. |
+
+### `RecognizerResult` structure
+
+Each call to `analyze()` returns a list of `RecognizerResult` objects:
+
+```python
+RecognizerResult(
+    entity_type="PHONE_NUMBER",   # The detected PII type
+    start=19,                      # Start character index in the text
+    end=31,                        # End character index
+    score=0.75,                    # Confidence (0.0–1.0)
+    analysis_explanation=None      # Set when return_decision_process=True
+)
+```
+
+## Listing supported entities and recognizers
+
+```python
+from presidio_analyzer import AnalyzerEngine
+
+analyzer = AnalyzerEngine()
+
+# List all supported entity types for English
+entities = analyzer.get_supported_entities(language="en")
+print(entities)
+
+# List all loaded recognizers
+recognizers = analyzer.get_recognizers(language="en")
+for r in recognizers:
+    print(r.name, r.supported_entities)
+```
+
+## Batch analysis with `BatchAnalyzerEngine`
+
+For high-throughput scenarios, use `BatchAnalyzerEngine` to process multiple texts or structured dictionaries in a single call:
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.batch_analyzer_engine import BatchAnalyzerEngine
+
+batch_analyzer = BatchAnalyzerEngine(analyzer_engine=AnalyzerEngine())
+
+# Analyze a list of strings
+texts = ["My name is Alice", "Call me at 555-1234", "No PII here"]
+results = batch_analyzer.analyze_iterator(texts, language="en")
+for text, result in zip(texts, results):
+    print(text, "->", result)
+
+# Analyze a dictionary of keys and values
+input_dict = {
+    "name": "John Smith",
+    "email": "john@example.com",
+    "age": 30,
+}
+dict_results = batch_analyzer.analyze_dict(input_dict, language="en")
+for r in dict_results:
+    print(r.key, "->", r.recognizer_results)
+```
+
+<Note>
+`BatchAnalyzerEngine.analyze_iterator` leverages `NlpEngine.process_batch` internally, enabling faster multi-text processing when supported by the underlying NLP engine.
+</Note>
+
+## Decision process / tracing
+
+Presidio can expose _why_ a given entity was detected. Enable it per request or globally via logging.
+
+<CodeGroup>
+
+```python Per request
+from presidio_analyzer import AnalyzerEngine
+
+analyzer = AnalyzerEngine()
+
+results = analyzer.analyze(
+    text="My phone number is 212-555-5555",
+    entities=["PHONE_NUMBER"],
+    language="en",
+    return_decision_process=True
+)
+
+# Each result now carries an analysis_explanation
+print(results[0].analysis_explanation)
+```
+
+```python Via logging
+from presidio_analyzer import AnalyzerEngine
+
+# Logs the full decision trace to stdout for every request
+analyzer = AnalyzerEngine(log_decision_process=True)
+
+results = analyzer.analyze(
+    text="My phone number is 212-555-5555",
+    entities=["PHONE_NUMBER"],
+    language="en",
+    correlation_id="my-trace-id"
+)
+```
+
+</CodeGroup>
+
+<Warning>
+Decision-process traces explain why PII entities **were** detected, not why they were **not** detected.
+</Warning>
+
+## Learn more
+
+<CardGroup cols={2}>
+  <Card title="Recognizers" icon="magnifying-glass" href="/analyzer/recognizers">
+    Predefined and custom recognizers, PatternRecognizer, and the RecognizerRegistry.
+  </Card>
+  <Card title="NLP engines" icon="brain" href="/analyzer/nlp-engines">
+    Configure spaCy, Transformers, or Stanza as the underlying NLP backend.
+  </Card>
+  <Card title="Languages" icon="language" href="/analyzer/languages">
+    Multi-language support and language-specific recognizer setup.
+  </Card>
+  <Card title="Anonymizer" icon="eye-slash" href="/anonymizer/overview">
+    Apply redaction operators to the entities detected by the Analyzer.
+  </Card>
+</CardGroup>

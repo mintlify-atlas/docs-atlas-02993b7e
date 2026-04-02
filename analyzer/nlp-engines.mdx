@@ -1,0 +1,315 @@
+---
+title: 'NLP engines'
+description: 'Configure spaCy, Transformers (HuggingFace), or Stanza as the NLP backend for Presidio Analyzer.'
+keywords: ['presidio', 'NLP engine', 'spaCy', 'transformers', 'stanza', 'HuggingFace', 'NER', 'GPU']
+---
+
+The `NlpEngine` is responsible for two things in Presidio:
+
+1. **Named Entity Recognition (NER)** — detecting entity spans directly from a pre-trained model.
+2. **Feature extraction** — producing tokens, lemmas, and part-of-speech tags that rule-based recognizers and the `ContextAwareEnhancer` depend on.
+
+Presidio provides three built-in NLP engine implementations:
+
+| Engine | Backend | Best for |
+|---|---|---|
+| `SpacyNlpEngine` | [spaCy](https://spacy.io) | Default; fast, lightweight, good accuracy. |
+| `TransformersNlpEngine` | HuggingFace Transformers wrapped in spaCy | Highest NER accuracy; slower; GPU recommended. |
+| `StanzaNlpEngine` | [Stanford Stanza](https://stanfordnlp.github.io/stanza/) | Alternative to spaCy; strong multilingual support. |
+
+## Configuring an NLP engine
+
+All three engines are configured through `NlpEngineProvider`, either via Python code or a YAML file.
+
+<CodeGroup>
+
+```python Via Python code
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+configuration = {
+    "nlp_engine_name": "spacy",
+    "models": [
+        {"lang_code": "en", "model_name": "en_core_web_lg"},
+        {"lang_code": "es", "model_name": "es_core_news_md"},
+    ],
+}
+
+provider = NlpEngineProvider(nlp_configuration=configuration)
+nlp_engine = provider.create_engine()
+
+analyzer = AnalyzerEngine(
+    nlp_engine=nlp_engine,
+    supported_languages=["en", "es"]
+)
+
+results = analyzer.analyze(text="Mi nombre es Morris", language="es")
+print(results)
+```
+
+```python Via YAML config file
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+provider = NlpEngineProvider(conf_file="./conf/languages.yaml")
+nlp_engine = provider.create_engine()
+
+analyzer = AnalyzerEngine(
+    nlp_engine=nlp_engine,
+    supported_languages=["en", "es"]
+)
+
+results = analyzer.analyze(text="My name is David", language="en")
+print(results)
+```
+
+</CodeGroup>
+
+### YAML configuration format
+
+```yaml
+nlp_engine_name: spacy
+models:
+  - lang_code: en
+    model_name: en_core_web_lg
+  - lang_code: es
+    model_name: es_core_news_md
+ner_model_configuration:
+  labels_to_ignore:
+    - O
+  model_to_presidio_entity_mapping:
+    PER: PERSON
+    LOC: LOCATION
+    ORG: ORGANIZATION
+    AGE: AGE
+    ID: ID
+    DATE: DATE_TIME
+  low_confidence_score_multiplier: 0.4
+  low_score_entity_names:
+    - ID
+    - ORG
+```
+
+The `ner_model_configuration` fields:
+
+| Field | Description |
+|---|---|
+| `labels_to_ignore` | Model labels to discard (e.g. `O` for "no entity"). |
+| `model_to_presidio_entity_mapping` | Map model label names to Presidio entity types. |
+| `low_confidence_score_multiplier` | Multiplier applied to scores for low-confidence entities. |
+| `low_score_entity_names` | Entity types that get the low-confidence multiplier. |
+
+## SpaCy NLP engine
+
+The default engine. Uses any spaCy pipeline — standard statistical models or transformer-based pipelines like `en_core_web_trf`.
+
+### Download a spaCy model
+
+```bash
+python -m spacy download en_core_web_lg
+python -m spacy download es_core_news_md
+```
+
+<Tip>
+For higher PERSON/LOCATION/ORGANIZATION accuracy at the cost of speed, try `en_core_web_trf` (transformer-based spaCy pipeline).
+</Tip>
+
+### Reuse a pre-loaded spaCy pipeline
+
+If your application already loads a spaCy pipeline, you can pass it directly to avoid loading it twice:
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import SpacyNlpEngine
+import spacy
+
+class LoadedSpacyNlpEngine(SpacyNlpEngine):
+    def __init__(self, loaded_spacy_model):
+        super().__init__()
+        self.nlp = {"en": loaded_spacy_model}
+
+nlp = spacy.load("en_core_web_sm")
+loaded_nlp_engine = LoadedSpacyNlpEngine(loaded_spacy_model=nlp)
+analyzer = AnalyzerEngine(nlp_engine=loaded_nlp_engine)
+
+analyzer.analyze(text="My name is Bob", language="en")
+```
+
+## Transformers NLP engine
+
+`TransformersNlpEngine` wraps a HuggingFace token-classification model inside a spaCy pipeline. This gives you transformer-quality NER while retaining access to spaCy's tokenization and lemmatization features.
+
+### Download the models
+
+```python
+from huggingface_hub import snapshot_download
+from transformers import AutoTokenizer, AutoModelForTokenClassification
+
+transformers_model = "StanfordAIMI/stanford-deidentifier-base"
+snapshot_download(repo_id=transformers_model)
+AutoTokenizer.from_pretrained(transformers_model)
+AutoModelForTokenClassification.from_pretrained(transformers_model)
+```
+
+```bash
+python -m spacy download en_core_web_sm
+```
+
+### Configure via Python
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import TransformersNlpEngine, NerModelConfiguration
+
+model_config = [
+    {
+        "lang_code": "en",
+        "model_name": {
+            "spacy": "en_core_web_sm",
+            "transformers": "StanfordAIMI/stanford-deidentifier-base"
+        }
+    }
+]
+
+mapping = dict(
+    PER="PERSON",
+    LOC="LOCATION",
+    ORG="ORGANIZATION",
+    AGE="AGE",
+    ID="ID",
+    EMAIL="EMAIL",
+    DATE="DATE_TIME",
+    PHONE="PHONE_NUMBER",
+    PATIENT="PERSON",
+    STAFF="PERSON",
+    HOSP="LOCATION",
+    PATORG="ORGANIZATION",
+    HCW="PERSON",
+    HOSPITAL="LOCATION",
+    VENDOR="ORGANIZATION",
+)
+
+ner_model_configuration = NerModelConfiguration(
+    model_to_presidio_entity_mapping=mapping,
+    alignment_mode="expand",      # "strict", "contract", "expand"
+    aggregation_strategy="max",   # "simple", "first", "average", "max"
+    labels_to_ignore=["O"]
+)
+
+transformers_nlp_engine = TransformersNlpEngine(
+    models=model_config,
+    ner_model_configuration=ner_model_configuration
+)
+
+analyzer = AnalyzerEngine(
+    nlp_engine=transformers_nlp_engine,
+    supported_languages=["en"]
+)
+```
+
+### Configure via YAML
+
+```yaml
+nlp_engine_name: transformers
+models:
+  - lang_code: en
+    model_name:
+      spacy: en_core_web_sm
+      transformers: StanfordAIMI/stanford-deidentifier-base
+
+ner_model_configuration:
+  labels_to_ignore:
+    - O
+  aggregation_strategy: max
+  stride: 16
+  alignment_mode: expand
+  model_to_presidio_entity_mapping:
+    PER: PERSON
+    LOC: LOCATION
+    ORG: ORGANIZATION
+    AGE: AGE
+    ID: ID
+    EMAIL: EMAIL
+    PATIENT: PERSON
+    STAFF: PERSON
+    HOSP: ORGANIZATION
+    PATORG: ORGANIZATION
+    DATE: DATE_TIME
+    PHONE: PHONE_NUMBER
+    HCW: PERSON
+    HOSPITAL: LOCATION
+    VENDOR: ORGANIZATION
+  low_confidence_score_multiplier: 0.4
+  low_score_entity_names:
+    - ID
+```
+
+Then load it with `NlpEngineProvider(conf_file="path/to/config.yaml")`.
+
+## Stanza NLP engine
+
+```python
+import stanza
+stanza.download("en")  # download the English model
+```
+
+Use `"nlp_engine_name": "stanza"` in the configuration dict or YAML.
+
+## GPU acceleration
+
+GPU is detected and used automatically when available. No code changes are required.
+
+```bash
+# Override device selection explicitly
+export PRESIDIO_DEVICE=cuda      # Force NVIDIA GPU
+export PRESIDIO_DEVICE=cuda:0    # Specific GPU index
+export PRESIDIO_DEVICE=cpu       # Force CPU
+```
+
+| Engine | GPU support |
+|---|---|
+| `TransformersNlpEngine` | Full |
+| `StanzaNlpEngine` | Full |
+| `SpacyNlpEngine` (transformer pipelines) | Full |
+| `SpacyNlpEngine` (standard models) | Not recommended — data transfer overhead. |
+
+### Install CUDA dependencies (NVIDIA)
+
+```bash
+pip install "spacy[cuda12x]"   # CUDA 12.x
+# or
+pip install "spacy[cuda11x]"   # CUDA 11.x
+```
+
+<Warning>
+If `cupy` is not installed or the version does not match your CUDA driver, spaCy silently falls back to CPU.
+</Warning>
+
+### Verify GPU usage
+
+```python
+import torch
+
+if torch.cuda.is_available():
+    print(f"GPU: CUDA ({torch.cuda.get_device_name(0)})")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    print("GPU: MPS (Apple Silicon)")
+else:
+    print("Using CPU")
+```
+
+## Mixing NER models
+
+Presidio supports one NER model per language via the `NlpEngine`. To run multiple NER models simultaneously, wrap additional models as separate `EntityRecognizer` objects alongside the `NlpEngine`:
+
+```python
+# One model in NlpEngine for features + NER
+# Additional models as recognizers for supplemental NER
+analyzer = AnalyzerEngine(
+    nlp_engine=my_primary_engine,
+    registry=registry_with_extra_ner_recognizers,
+    supported_languages=["en"]
+)
+```
+
+See the [Flair recognizer sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/flair_recognizer.py) for a full example.

@@ -1,0 +1,398 @@
+---
+title: "Anonymizer API Reference"
+description: "Full Python API reference for the presidio-anonymizer package."
+---
+
+The `presidio-anonymizer` package transforms text by replacing, redacting, encrypting, or otherwise manipulating PII entities identified by the analyzer. It also provides deanonymization and batch processing capabilities.
+
+## AnonymizerEngine
+
+The main entry point for anonymizing text. Takes the original text alongside `RecognizerResult` objects from the analyzer and applies the specified operators to replace PII.
+
+```python
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+
+engine = AnonymizerEngine()
+
+result = engine.anonymize(
+    text="My name is Bond, James Bond",
+    analyzer_results=[
+        RecognizerResult(entity_type="PERSON", start=11, end=15, score=0.8),
+        RecognizerResult(entity_type="PERSON", start=17, end=27, score=0.8),
+    ],
+    operators={"PERSON": OperatorConfig("replace", {"new_value": "<PERSON>"})},
+)
+
+print(result.text)   # "My name is <PERSON>, <PERSON>"
+print(result.items)  # list of OperatorResult objects
+```
+
+### Constructor
+
+`AnonymizerEngine` has no constructor parameters. It inherits from `EngineBase` and automatically loads all available built-in operators on initialization.
+
+---
+
+### `anonymize`
+
+Anonymize the given text by applying operators to the detected PII entities.
+
+**Returns:** `EngineResult`
+
+<ParamField path="text" type="str" required>
+  The original text to anonymize.
+</ParamField>
+
+<ParamField path="analyzer_results" type="List[RecognizerResult]" required>
+  The list of detected PII entities from `AnalyzerEngine.analyze`.
+</ParamField>
+
+<ParamField path="operators" type="Dict[str, OperatorConfig]" default="None">
+  A mapping of entity type names to `OperatorConfig` objects specifying how each entity type should be anonymized. Use the key `"DEFAULT"` to apply an operator to all entity types not explicitly mapped. If `None`, defaults to `replace` for all entities.
+</ParamField>
+
+<ParamField path="conflict_resolution" type="ConflictResolutionStrategy" default="ConflictResolutionStrategy.MERGE_SIMILAR_OR_CONTAINED">
+  The strategy for handling overlapping or conflicting entity spans. See `ConflictResolutionStrategy`.
+</ParamField>
+
+<Note>
+  Built-in operator names: `"replace"`, `"redact"`, `"mask"`, `"hash"`, `"encrypt"`, `"keep"`.
+</Note>
+
+---
+
+### `add_anonymizer`
+
+Register a custom operator class with the engine.
+
+```python
+engine.add_anonymizer(MyCustomAnonymizer)
+```
+
+<ParamField path="anonymizer_cls" type="Type[Operator]" required>
+  The operator class (not instance) to register. Must extend `Operator`.
+</ParamField>
+
+---
+
+### `remove_anonymizer`
+
+Unregister an operator class from the engine.
+
+```python
+engine.remove_anonymizer(MyCustomAnonymizer)
+```
+
+<ParamField path="anonymizer_cls" type="Type[Operator]" required>
+  The operator class to remove.
+</ParamField>
+
+---
+
+### `get_anonymizers`
+
+Return a list of the names of all currently registered anonymizer operators.
+
+```python
+names = engine.get_anonymizers()
+print(names)  # ["replace", "redact", "mask", "hash", "encrypt", "keep", ...]
+```
+
+**Returns:** `List[str]`
+
+---
+
+## DeanonymizeEngine
+
+Reverses anonymization for operators that support it (e.g. `"decrypt"`).
+
+```python
+from presidio_anonymizer import DeanonymizeEngine
+from presidio_anonymizer.entities import OperatorConfig, OperatorResult
+
+engine = DeanonymizeEngine()
+
+result = engine.deanonymize(
+    text="My name is S184CMt9Drj7QaKQ2PfZCo8oDVxhyHo+qz...",
+    entities=[
+        OperatorResult(start=11, end=55, entity_type="PERSON", text="<encrypted>", operator="encrypt"),
+    ],
+    operators={"PERSON": OperatorConfig("decrypt", {"key": "WmZq4t7w!z%C&F)J"})},
+)
+print(result.text)
+```
+
+### Constructor
+
+`DeanonymizeEngine` has no constructor parameters.
+
+---
+
+### `deanonymize`
+
+Reverse anonymization on the given text using the provided operators.
+
+**Returns:** `EngineResult`
+
+<ParamField path="text" type="str" required>
+  The anonymized text to deanonymize.
+</ParamField>
+
+<ParamField path="entities" type="List[OperatorResult]" required>
+  A list of `OperatorResult` objects describing the anonymized entities — typically the `items` field from a previous `EngineResult`.
+</ParamField>
+
+<ParamField path="operators" type="Dict[str, OperatorConfig]" required>
+  A mapping of entity type names to `OperatorConfig` objects specifying how to reverse each entity type.
+</ParamField>
+
+---
+
+### `add_deanonymizer`
+
+Register a custom deanonymizer operator class with the engine.
+
+```python
+engine.add_deanonymizer(MyDecryptDeanonymizer)
+```
+
+<ParamField path="deanonymizer_cls" type="Type[Operator]" required>
+  The operator class (not instance) to register. Must extend `Operator` and implement `operator_type` returning `OperatorType.Deanonymize`.
+</ParamField>
+
+---
+
+### `remove_deanonymizer`
+
+Unregister a deanonymizer operator class from the engine.
+
+```python
+engine.remove_deanonymizer(MyDecryptDeanonymizer)
+```
+
+<ParamField path="deanonymizer_cls" type="Type[Operator]" required>
+  The operator class to remove.
+</ParamField>
+
+---
+
+### `get_deanonymizers`
+
+Return a list of the names of all currently registered deanonymizer operators.
+
+```python
+names = engine.get_deanonymizers()
+```
+
+**Returns:** `List[str]`
+
+---
+
+## BatchAnonymizerEngine
+
+Anonymizes collections of texts (lists or dictionaries) by wrapping `AnonymizerEngine`.
+
+```python
+from presidio_anonymizer import AnonymizerEngine, BatchAnonymizerEngine
+
+batch_engine = BatchAnonymizerEngine()
+
+texts = ["Alice is here", "Call Bob at 555-1234", "No PII"]
+analyzer_results = [...]  # from BatchAnalyzerEngine.analyze_iterator
+
+anonymized = batch_engine.anonymize_list(texts, analyzer_results)
+```
+
+### Constructor
+
+<ParamField path="anonymizer_engine" type="AnonymizerEngine" default="None">
+  An `AnonymizerEngine` instance to use. If not provided, a default engine is created automatically.
+</ParamField>
+
+---
+
+### `anonymize_list`
+
+Anonymize a list of strings using corresponding analyzer results.
+
+```python
+anonymized_texts = batch_engine.anonymize_list(
+    texts=["Alice lives in NY", "Call me at 212-555-5555"],
+    recognizer_results_list=[[...], [...]],
+    operators={"PERSON": OperatorConfig("replace", {"new_value": "<PERSON>"})},
+)
+```
+
+**Returns:** `List[Union[str, Any]]`
+
+<ParamField path="texts" type="List[Optional[Union[str, bool, int, float]]]" required>
+  The original texts to anonymize. Items with types other than `str`, `bool`, `int`, or `float` are returned unchanged.
+</ParamField>
+
+<ParamField path="recognizer_results_list" type="List[List[RecognizerResult]]" required>
+  A list of analyzer result lists — one inner list per text in `texts`. Corresponds positionally to `texts`.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnonymizerEngine.anonymize` (e.g. `operators`, `conflict_resolution`).
+</ParamField>
+
+---
+
+### `anonymize_dict`
+
+Anonymize values in a dictionary produced by `BatchAnalyzerEngine.analyze_dict`.
+
+```python
+from presidio_analyzer import BatchAnalyzerEngine
+
+batch_analyzer = BatchAnalyzerEngine()
+analyzer_results = batch_analyzer.analyze_dict(
+    {"name": "Alice", "phone": "212-555-5555"},
+    language="en",
+)
+
+anonymized = batch_engine.anonymize_dict(analyzer_results)
+```
+
+**Returns:** `Dict[str, str]`
+
+<ParamField path="analyzer_results" type="Iterable[DictRecognizerResult]" required>
+  The output of `BatchAnalyzerEngine.analyze_dict`. An iterable of `DictRecognizerResult` objects.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnonymizerEngine.anonymize`.
+</ParamField>
+
+---
+
+## OperatorConfig
+
+Configures which anonymization operator to apply and what parameters to pass to it.
+
+```python
+from presidio_anonymizer.entities import OperatorConfig
+
+# Replace with a placeholder
+replace_config = OperatorConfig("replace", {"new_value": "<PERSON>"})
+
+# Mask with asterisks
+mask_config = OperatorConfig("mask", {
+    "masking_char": "*",
+    "chars_to_mask": 4,
+    "from_end": True,
+})
+
+# Encrypt
+encrypt_config = OperatorConfig("encrypt", {"key": "WmZq4t7w!z%C&F)J"})
+
+# Redact entirely
+redact_config = OperatorConfig("redact")
+```
+
+### Constructor
+
+<ParamField path="operator_name" type="str" required>
+  The name of the operator to use. Built-in values: `"replace"`, `"redact"`, `"mask"`, `"hash"`, `"encrypt"`, `"keep"`.
+</ParamField>
+
+<ParamField path="params" type="Dict" default="{}">
+  A dictionary of parameters passed to the operator. The required keys depend on the operator chosen.
+
+  <Expandable title="Operator parameter reference">
+    **`replace`**: `{"new_value": str}` — replaces the PII with the given string (default: entity type tag)
+
+    **`redact`**: no parameters — removes the PII entirely
+
+    **`mask`**: `{"masking_char": str, "chars_to_mask": int, "from_end": bool}` — replaces part of the PII with a character
+
+    **`hash`**: `{"hash_type": str, "salt": str}` — hashes the PII; `hash_type` is one of `"sha256"` (default) or `"sha512"`. Optionally provide a `salt` string (minimum 16 bytes) for reproducible hashes across calls. If omitted, a random salt is generated per entity.
+
+    **`encrypt`**: `{"key": str}` — AES-CBC encrypts the PII with the given 128-bit key (16 chars)
+
+    **`keep`**: no parameters — leaves the PII unchanged
+  </Expandable>
+</ParamField>
+
+---
+
+## EngineResult
+
+The return value of `AnonymizerEngine.anonymize` and `DeanonymizeEngine.deanonymize`.
+
+```python
+result = engine.anonymize(text="...", analyzer_results=[...])
+
+print(result.text)    # The transformed text
+print(result.items)   # List[OperatorResult] describing each transformation
+print(result.to_json())
+```
+
+### Fields
+
+<ResponseField name="text" type="str">
+  The full anonymized (or deanonymized) output text.
+</ResponseField>
+
+<ResponseField name="items" type="List[OperatorResult]">
+  A list of `OperatorResult` objects, each describing one PII entity that was processed — including its position in the output text.
+</ResponseField>
+
+---
+
+## OperatorResult
+
+Represents one processed PII entity in the output of an anonymization or deanonymization operation.
+
+### Fields
+
+<ResponseField name="start" type="int">
+  The start character index of the processed entity in the **output** text.
+</ResponseField>
+
+<ResponseField name="end" type="int">
+  The end character index of the processed entity in the **output** text.
+</ResponseField>
+
+<ResponseField name="entity_type" type="str">
+  The type of the PII entity (e.g. `"PERSON"`, `"PHONE_NUMBER"`).
+</ResponseField>
+
+<ResponseField name="text" type="str">
+  The replacement text that was inserted (e.g. `"<PERSON>"` or a hash value).
+</ResponseField>
+
+<ResponseField name="operator" type="str">
+  The name of the operator that was applied (e.g. `"replace"`, `"encrypt"`).
+</ResponseField>
+
+---
+
+## ConflictResolutionStrategy
+
+An enum that controls how overlapping or conflicting entity detections are handled by `AnonymizerEngine.anonymize`.
+
+```python
+from presidio_anonymizer.entities import ConflictResolutionStrategy
+
+# Default — merges same-type overlapping entities, removes contained conflicts
+result = engine.anonymize(
+    text=text,
+    analyzer_results=results,
+    conflict_resolution=ConflictResolutionStrategy.MERGE_SIMILAR_OR_CONTAINED,
+)
+
+# Adjusts start/end positions of overlapping entities instead of dropping them
+result = engine.anonymize(
+    text=text,
+    analyzer_results=results,
+    conflict_resolution=ConflictResolutionStrategy.REMOVE_INTERSECTIONS,
+)
+```
+
+| Value | Description |
+|---|---|
+| `MERGE_SIMILAR_OR_CONTAINED` | **(Default)** Merges overlapping entities of the same type and removes entities contained within higher-scored entities. |
+| `REMOVE_INTERSECTIONS` | Resolves intersection conflicts by adjusting the start/end boundaries of overlapping entities based on their confidence scores. |

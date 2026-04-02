@@ -1,0 +1,172 @@
+---
+title: 'Quickstart: text de-identification'
+description: 'Detect and anonymize PII in plain text using presidio-analyzer and presidio-anonymizer.'
+keywords: ['presidio', 'PII', 'text', 'anonymize', 'analyze', 'quickstart']
+---
+
+This guide walks through detecting and anonymizing PII in text using the `presidio-analyzer` and `presidio-anonymizer` Python packages.
+
+## Prerequisites
+
+Install the packages and download a spaCy language model:
+
+<CodeGroup>
+
+```bash spaCy (default)
+pip install presidio-analyzer
+pip install presidio-anonymizer
+python -m spacy download en_core_web_lg
+```
+
+```bash Transformers
+pip install "presidio-analyzer[transformers]"
+pip install presidio-anonymizer
+python -m spacy download en_core_web_sm
+```
+
+</CodeGroup>
+
+## Detect and anonymize PII
+
+<Steps>
+  <Step title="Analyze text for PII">
+    The `AnalyzerEngine` scans text and returns a list of `RecognizerResult` objects. Each result includes the entity type, character offsets, and a confidence score.
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+
+    text = "My phone number is 212-555-5555"
+
+    # Load the engine (spaCy model + built-in recognizers)
+    analyzer = AnalyzerEngine()
+
+    # Detect PII entities
+    results = analyzer.analyze(
+        text=text,
+        entities=["PHONE_NUMBER"],
+        language="en",
+    )
+    print(results)
+    # [type: PHONE_NUMBER, start: 19, end: 31, score: 0.75]
+    ```
+
+    Omit the `entities` argument to detect all supported entity types.
+  </Step>
+  <Step title="Anonymize detected PII">
+    Pass the original text and the analyzer results to the `AnonymizerEngine`. The default operator replaces each detected span with a placeholder such as `<PHONE_NUMBER>`.
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_anonymizer import AnonymizerEngine
+
+    text = "My phone number is 212-555-5555"
+
+    analyzer = AnalyzerEngine()
+    results = analyzer.analyze(text=text, entities=["PHONE_NUMBER"], language="en")
+
+    anonymizer = AnonymizerEngine()
+    anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+
+    print(anonymized)
+    # text: My phone number is <PHONE_NUMBER>
+    ```
+  </Step>
+  <Step title="Use a custom anonymization operator">
+    Supply an `operators` dictionary to control how each entity type is handled. The built-in operators are `replace`, `redact`, `mask`, `hash`, `encrypt`, `custom`, and `keep`.
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_anonymizer import AnonymizerEngine
+    from presidio_anonymizer.entities import OperatorConfig
+
+    text = "My phone number is 212-555-5555"
+
+    analyzer = AnalyzerEngine()
+    results = analyzer.analyze(text=text, entities=["PHONE_NUMBER"], language="en")
+
+    anonymizer = AnonymizerEngine()
+    anonymized = anonymizer.anonymize(
+        text=text,
+        analyzer_results=results,
+        operators={
+            "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "--REDACTED--"})
+        },
+    )
+
+    print(anonymized)
+    # text: My phone number is --REDACTED--
+    ```
+  </Step>
+  <Step title="Encrypt PII and decrypt it later">
+    The `encrypt` operator transforms PII into a ciphertext that can be reversed with `DeanonymizeEngine` using the same key.
+
+    ```python
+    from presidio_anonymizer import AnonymizerEngine, DeanonymizeEngine
+    from presidio_anonymizer.entities import RecognizerResult, OperatorResult, OperatorConfig
+
+    # --- Anonymize with encryption ---
+    engine = AnonymizerEngine()
+
+    result = engine.anonymize(
+        text="My name is Bond, James Bond",
+        analyzer_results=[
+            RecognizerResult(entity_type="PERSON", start=11, end=15, score=0.8),
+            RecognizerResult(entity_type="PERSON", start=17, end=27, score=0.8),
+        ],
+        operators={"PERSON": OperatorConfig("encrypt", {"key": "WmZq4t7w!z%C&F)J"})},
+    )
+
+    print(result.text)
+    # My name is <encrypted_value>, <encrypted_value>
+
+    # --- Deanonymize (decrypt) ---
+    deanon_engine = DeanonymizeEngine()
+
+    deanon_result = deanon_engine.deanonymize(
+        text="My name is S184CMt9Drj7QaKQ21JTrpYzghnboTF9pn/neN8JME0=",
+        entities=[
+            OperatorResult(start=11, end=55, entity_type="PERSON"),
+        ],
+        operators={"DEFAULT": OperatorConfig("decrypt", {"key": "WmZq4t7w!z%C&F)J"})},
+    )
+
+    print(deanon_result)
+    ```
+  </Step>
+</Steps>
+
+## Using Transformers as the NLP engine
+
+To use a HuggingFace transformers model instead of spaCy for named-entity recognition:
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import TransformersNlpEngine
+from presidio_anonymizer import AnonymizerEngine
+
+text = "My name is Don and my phone number is 212-555-5555"
+
+# Configure the transformers model
+model_config = [
+    {
+        "lang_code": "en",
+        "model_name": {
+            "spacy": "en_core_web_sm",       # spaCy model for tokens/lemmas
+            "transformers": "dslim/bert-base-NER",  # transformers model for NER
+        },
+    }
+]
+
+nlp_engine = TransformersNlpEngine(models=model_config)
+analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
+
+results = analyzer.analyze(text=text, language="en")
+
+anonymizer = AnonymizerEngine()
+anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+print(anonymized)
+```
+
+<Tip>
+  If the transformers model is not already cached, it will be downloaded on the first call to `AnalyzerEngine`. To pre-download, refer to the Presidio documentation on downloading pre-trained models.
+</Tip>

@@ -1,0 +1,464 @@
+---
+title: 'Kubernetes deployment'
+description: 'Deploy Presidio at scale on Kubernetes using the official Helm chart or raw manifests.'
+keywords: ['kubernetes', 'k8s', 'helm', 'aks', 'kind', 'presidio-analyzer', 'presidio-anonymizer', 'presidio-image-redactor']
+---
+
+Presidio can be deployed to any Kubernetes 1.18+ cluster. The repository ships a Helm chart that provisions Deployments, Services, and an optional NGINX Ingress for all three Presidio modules.
+
+## Overview
+
+The Helm chart at `docs/samples/deployments/k8s/charts/presidio` deploys:
+
+- **presidio-analyzer** — PII detection service
+- **presidio-anonymizer** — text anonymization/deanonymization service
+- **presidio-image-redactor** — image redaction service
+
+Each module runs as an independent Deployment with a ClusterIP Service. An optional NGINX Ingress routes external traffic to all three services.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Kubernetes cluster">
+    A Kubernetes **1.18+** cluster with [RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) enabled.
+
+    Plan node capacity based on the resource requirements below before provisioning. If using [AKS](https://learn.microsoft.com/en-us/azure/aks/intro-kubernetes), RBAC is enabled by default.
+  </Step>
+
+  <Step title="kubectl">
+    Install [kubectl](https://kubernetes.io/docs/tasks/tools/) and verify connectivity:
+
+    ```bash
+    kubectl version
+    ```
+  </Step>
+
+  <Step title="Helm 3">
+    Install [Helm 3](https://helm.sh/docs/intro/install/). Verify it is installed:
+
+    ```bash
+    helm version
+    ```
+  </Step>
+
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/microsoft/presidio.git
+    cd presidio
+    ```
+  </Step>
+</Steps>
+
+## Resource requirements
+
+The values below come from the Helm chart's `values.yaml` and reflect the resources required by each module.
+
+| Module | Memory request | Memory limit | CPU request | CPU limit |
+|---|---|---|---|---|
+| presidio-analyzer | 1500 Mi | 3000 Mi | 1500m | 2000m |
+| presidio-anonymizer | 128 Mi | 512 Mi | 125m | 500m |
+| presidio-image-redactor | 1500 Mi | 3000 Mi | 1500m | 2000m |
+
+<Warning>
+  The analyzer and image-redactor load NLP models at startup. Under-provisioning memory causes `OOMKilled` pod restarts. Ensure your nodes have sufficient allocatable memory before deploying.
+</Warning>
+
+## Deploy with Helm
+
+### Deploy to a live cluster
+
+<Steps>
+  <Step title="Create the namespace">
+    ```bash
+    kubectl create namespace presidio
+    ```
+  </Step>
+
+  <Step title="Deploy with Helm">
+    From the root of the cloned repository:
+
+    ```bash
+    helm install presidio \
+      docs/samples/deployments/k8s/charts/presidio \
+      --set tag=latest \
+      --namespace presidio
+    ```
+
+    To use images from a private registry (e.g., ACR):
+
+    ```bash
+    helm install presidio \
+      docs/samples/deployments/k8s/charts/presidio \
+      --set registry=<your-registry>,tag=latest \
+      --namespace presidio
+    ```
+  </Step>
+
+  <Step title="Verify pods are running">
+    ```bash
+    kubectl get pods -n presidio
+    ```
+
+    All three pods should reach `Running` status. The analyzer and image-redactor pods may take a minute or two while NLP models load.
+  </Step>
+</Steps>
+
+### Deploy locally with KIND
+
+[KIND (Kubernetes IN Docker)](https://github.com/kubernetes-sigs/kind) lets you run a full Kubernetes cluster inside Docker for local testing.
+
+<Note>
+  This setup is for local development and testing only. It is not intended for any workload environment.
+</Note>
+
+<Steps>
+  <Step title="Install Docker">
+    [Download and install Docker](https://docs.docker.com/install/).
+  </Step>
+
+  <Step title="Clone and run the setup script">
+    The setup script builds KIND from source, creates a cluster, and deploys Presidio:
+
+    ```bash
+    cd docs/samples/deployments/k8s/deployment/
+    ./run-with-kind.sh
+    ```
+  </Step>
+
+  <Step title="Verify pods">
+    ```bash
+    kubectl get pod -n presidio
+    ```
+  </Step>
+
+  <Step title="Port-forward to access services">
+    ```bash
+    kubectl port-forward <presidio-analyzer-pod-name> 8080:8080 -n presidio
+    ```
+  </Step>
+</Steps>
+
+## Helm chart reference
+
+### Key values
+
+| Value | Default | Description |
+|---|---|---|
+| `registry` | `mcr.microsoft.com` | Container registry to pull images from. |
+| `tag` | `latest` | Image tag for all three services. |
+| `ingress.enabled` | `true` | Enable NGINX Ingress for external access. |
+| `ingress.class` | `nginx` | Ingress class annotation. |
+| `analyzer.replicas` | `1` | Number of analyzer pod replicas. |
+| `anonymizer.replicas` | `1` | Number of anonymizer pod replicas. |
+| `anonymizerimage.replicas` | `1` | Number of image-redactor pod replicas. |
+| `privateRegistry` | — | Name of an image pull secret for private registries. |
+
+### Full default values
+
+```yaml values.yaml
+registry: mcr.microsoft.com
+tag: latest
+
+ingress:
+  enabled: true
+  class: nginx
+
+analyzer:
+  name: presidio-analyzer
+  replicas: 1
+  imagePullPolicy: Always
+  container:
+    resources:
+      requests:
+        memory: "1500Mi"
+        cpu: "1500m"
+      limits:
+        memory: "3000Mi"
+        cpu: "2000m"
+  service:
+    type: ClusterIP
+    externalPort: 80
+    internalPort: 8080
+    name: http
+
+anonymizer:
+  name: presidio-anonymizer
+  replicas: 1
+  imagePullPolicy: Always
+  container:
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "125m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+  service:
+    type: ClusterIP
+    externalPort: 80
+    internalPort: 8080
+    name: http
+
+anonymizerimage:
+  name: presidio-image-redactor
+  replicas: 1
+  imagePullPolicy: Always
+  container:
+    resources:
+      requests:
+        memory: "1500Mi"
+        cpu: "1500m"
+      limits:
+        memory: "3000Mi"
+        cpu: "2000m"
+  service:
+    type: ClusterIP
+    externalPort: 80
+    internalPort: 8080
+    name: http
+```
+
+## Example Kubernetes manifests
+
+If you prefer raw manifests over Helm, the following examples are derived from the Helm chart templates.
+
+### presidio-analyzer
+
+<CodeGroup>
+
+```yaml analyzer-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio-analyzer
+  namespace: presidio
+  labels:
+    app: presidio-analyzer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: presidio-analyzer
+  template:
+    metadata:
+      labels:
+        app: presidio-analyzer
+    spec:
+      containers:
+        - name: presidio-analyzer
+          image: mcr.microsoft.com/presidio-analyzer:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            requests:
+              memory: "1500Mi"
+              cpu: "1500m"
+            limits:
+              memory: "3000Mi"
+              cpu: "2000m"
+```
+
+```yaml analyzer-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio-analyzer
+  namespace: presidio
+  labels:
+    app: presidio-analyzer
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: presidio-analyzer
+```
+
+</CodeGroup>
+
+### presidio-anonymizer
+
+<CodeGroup>
+
+```yaml anonymizer-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio-anonymizer
+  namespace: presidio
+  labels:
+    app: presidio-anonymizer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: presidio-anonymizer
+  template:
+    metadata:
+      labels:
+        app: presidio-anonymizer
+    spec:
+      containers:
+        - name: presidio-anonymizer
+          image: mcr.microsoft.com/presidio-anonymizer:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "125m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+```
+
+```yaml anonymizer-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio-anonymizer
+  namespace: presidio
+  labels:
+    app: presidio-anonymizer
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: presidio-anonymizer
+```
+
+</CodeGroup>
+
+### presidio-image-redactor
+
+<CodeGroup>
+
+```yaml image-redactor-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio-image-redactor
+  namespace: presidio
+  labels:
+    app: presidio-image-redactor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: presidio-image-redactor
+  template:
+    metadata:
+      labels:
+        app: presidio-image-redactor
+    spec:
+      containers:
+        - name: presidio-image-redactor
+          image: mcr.microsoft.com/presidio-image-redactor:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            requests:
+              memory: "1500Mi"
+              cpu: "1500m"
+            limits:
+              memory: "3000Mi"
+              cpu: "2000m"
+```
+
+```yaml image-redactor-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio-image-redactor
+  namespace: presidio
+  labels:
+    app: presidio-image-redactor
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: presidio-image-redactor
+```
+
+</CodeGroup>
+
+Apply all manifests:
+
+```bash
+kubectl apply -f analyzer-deployment.yaml -f analyzer-service.yaml
+kubectl apply -f anonymizer-deployment.yaml -f anonymizer-service.yaml
+kubectl apply -f image-redactor-deployment.yaml -f image-redactor-service.yaml
+```
+
+## Scaling considerations
+
+### Horizontal pod autoscaling
+
+The analyzer and image-redactor are CPU- and memory-intensive due to NLP model loading. Before enabling HPA, confirm your nodes can accommodate additional replicas at the resource levels defined above.
+
+```yaml hpa-analyzer.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: presidio-analyzer-hpa
+  namespace: presidio
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: presidio-analyzer
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+### NLP model loading
+
+The analyzer and image-redactor load NLP models into memory at startup. This means:
+
+- **Slow pod startup** — allow 60–120 seconds for readiness before routing traffic. Add a `readinessProbe` against the `/health` endpoint.
+- **No model sharing between replicas** — each pod loads its own copy of the model. Plan memory accordingly when scaling out.
+- **Service mesh required for load balancing** — if running more than one replica, use a service mesh such as [Linkerd](https://linkerd.io/) or [Istio](https://istio.io/) for proper traffic distribution. See the [upstream note](https://github.com/microsoft/presidio/issues/304) in the Helm chart.
+
+### Recommended readiness probe
+
+Add the following to the container spec of the analyzer and image-redactor deployments:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  failureThreshold: 6
+```

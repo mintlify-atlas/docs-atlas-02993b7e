@@ -1,0 +1,261 @@
+---
+title: 'Recognizers'
+description: 'Understand built-in and custom PII recognizers in Presidio — including PatternRecognizer, EntityRecognizer, and RecognizerRegistry.'
+keywords: ['presidio', 'recognizers', 'PatternRecognizer', 'EntityRecognizer', 'RecognizerRegistry', 'PII']
+---
+
+Recognizers are the core detection units in Presidio. Each recognizer is responsible for identifying one or more PII entity types in text. They can use regular expressions, deny-lists, NLP-based Named Entity Recognition, or completely custom logic.
+
+## Recognizer class hierarchy
+
+| Class | Description |
+|---|---|
+| `EntityRecognizer` | Abstract base class for all recognizers. |
+| `LocalRecognizer` | Abstract class for recognizers running in-process. |
+| `PatternRecognizer` | Concrete class for regex- and deny-list-based detection, with optional validation. |
+| `RemoteRecognizer` | Abstract class for recognizers that call an external PII detection service. |
+
+## Built-in predefined recognizers
+
+Presidio ships with predefined recognizers covering a broad range of PII types. They are automatically loaded when you instantiate `AnalyzerEngine()`.
+
+**Generic (language-agnostic patterns)**
+
+| Recognizer | Entity type |
+|---|---|
+| `CreditCardRecognizer` | `CREDIT_CARD` |
+| `EmailRecognizer` | `EMAIL_ADDRESS` |
+| `IbanRecognizer` | `IBAN_CODE` |
+| `IpRecognizer` | `IP_ADDRESS` |
+| `PhoneRecognizer` | `PHONE_NUMBER` |
+| `UrlRecognizer` | `URL` |
+| `CryptoRecognizer` | `CRYPTO` |
+| `DateRecognizer` | `DATE_TIME` |
+
+**US-specific**
+
+| Recognizer | Entity type |
+|---|---|
+| `UsSsnRecognizer` | `US_SSN` |
+| `UsPassportRecognizer` | `US_PASSPORT` |
+| `UsDriverLicenseRecognizer` | `US_DRIVER_LICENSE` |
+| `UsItinRecognizer` | `US_ITIN` |
+| `UsNpiRecognizer` | `US_NPI` |
+| `UsBankRecognizer` | `US_BANK_NUMBER` |
+
+**Other countries** — AU, DE, ES, FI, IN, IT, KR, NG, PL, SE, SG, TH, UK — each with country-specific PII types (passports, tax IDs, social security numbers, etc.).
+
+**NLP-based (via NlpEngine)**
+
+| Recognizer | Entity types |
+|---|---|
+| `SpacyRecognizer` | `PERSON`, `LOCATION`, `ORGANIZATION`, `DATE_TIME`, `NRP` |
+| `TransformersRecognizer` | Mapped via `model_to_presidio_entity_mapping` |
+| `StanzaRecognizer` | `PERSON`, `LOCATION`, `ORGANIZATION`, etc. |
+
+## `PatternRecognizer`
+
+`PatternRecognizer` is the most convenient class for creating new recognizers without writing an `analyze()` method from scratch. It supports:
+
+- **Regex patterns** with confidence scores.
+- **Deny-lists** (converted internally to a regex).
+- **Context words** that boost the score when found near a match.
+- **Validation / invalidation** callbacks for checksum or structural checks.
+
+### Constructor parameters
+
+```python
+PatternRecognizer(
+    supported_entity: str,          # The PII entity type this recognizer detects
+    name: str = None,               # Optional human-readable name
+    supported_language: str = "en", # BCP-47 language code
+    patterns: List[Pattern] = None, # List of Pattern(name, regex, score) objects
+    deny_list: List[str] = None,    # List of words to detect as PII
+    context: List[str] = None,      # Context words that improve confidence
+    deny_list_score: float = 1.0,   # Confidence for deny-list matches
+    global_regex_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE,
+)
+```
+
+### Deny-list example
+
+```python
+from presidio_analyzer import PatternRecognizer
+
+titles_recognizer = PatternRecognizer(
+    supported_entity="TITLE",
+    deny_list=["Mr.", "Mrs.", "Miss", "Dr."]
+)
+
+results = titles_recognizer.analyze(text="Mr. Schmidt", entities=["TITLE"])
+print(results)
+# [type: TITLE, start: 0, end: 3, score: 1.0]
+```
+
+### Regex pattern example
+
+```python
+from presidio_analyzer import PatternRecognizer, Pattern
+
+zip_pattern = Pattern(
+    name="zip code (weak)",
+    regex=r"(\b\d{5}(?:\-\d{4})?\b)",
+    score=0.01
+)
+
+zip_recognizer = PatternRecognizer(
+    supported_entity="ZIP_CODE",
+    patterns=[zip_pattern],
+    context=["zip", "code", "postal"]
+)
+```
+
+### Validation
+
+Override `validate_result` to confirm a regex match structurally (e.g., Luhn checksum for credit cards). Return `True` to boost the score to `MAX_SCORE`, `False` to set it to `MIN_SCORE`, or `None` to leave the score unchanged.
+
+```python
+from presidio_analyzer import PatternRecognizer
+
+class MyRecognizer(PatternRecognizer):
+    def validate_result(self, pattern_text: str):
+        # Return True / False / None
+        return len(pattern_text) == 9
+```
+
+## `EntityRecognizer` base class
+
+For more complex detection logic (ML models, rule-based NLP features, external APIs), subclass `LocalRecognizer` directly:
+
+```python
+from presidio_analyzer import LocalRecognizer, RecognizerResult
+
+class MyCustomRecognizer(LocalRecognizer):
+    def load(self):
+        # Load any model or resource once
+        pass
+
+    def analyze(self, text, entities, nlp_artifacts=None):
+        results = []
+        # Use nlp_artifacts.tokens, .lemmas, .entities etc.
+        # Return a list of RecognizerResult
+        results.append(
+            RecognizerResult(
+                entity_type="MY_ENTITY",
+                start=0,
+                end=5,
+                score=0.85
+            )
+        )
+        return results
+```
+
+<Note>
+The `nlp_artifacts` parameter provides pre-computed NLP features from the configured `NlpEngine`, including `tokens`, `lemmas`, `pos_tags`, `entities`, and character offsets — reuse them to avoid redundant NLP calls.
+</Note>
+
+## `RecognizerRegistry`
+
+The `RecognizerRegistry` stores all active recognizers and supplies the relevant subset to `AnalyzerEngine` for each request.
+
+### Add a recognizer
+
+```python
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry, PatternRecognizer
+
+titles_recognizer = PatternRecognizer(
+    supported_entity="TITLE",
+    deny_list=["Mr.", "Mrs.", "Miss"]
+)
+
+# Option A: inject a custom registry
+registry = RecognizerRegistry()
+registry.load_predefined_recognizers()
+registry.add_recognizer(titles_recognizer)
+analyzer = AnalyzerEngine(registry=registry)
+
+# Option B: add directly to an existing engine's registry
+analyzer = AnalyzerEngine()
+analyzer.registry.add_recognizer(titles_recognizer)
+
+results = analyzer.analyze(text="His name is Mr. Jones", language="en")
+print(results)
+```
+
+### Load recognizers from YAML
+
+Recognizers can be defined in YAML and loaded without writing Python:
+
+```yaml
+# recognizers.yaml
+recognizers:
+  - name: Zip code Recognizer
+    supported_language: en
+    supported_entity: ZIP_CODE
+    patterns:
+      - name: zip code (weak)
+        regex: \b\d{5}(?:\-\d{4})?\b
+        score: 0.01
+    context:
+      - zip
+      - code
+```
+
+```python
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+
+registry = RecognizerRegistry()
+registry.load_predefined_recognizers()
+registry.add_recognizers_from_yaml("recognizers.yaml")
+
+analyzer = AnalyzerEngine(registry=registry)
+results = analyzer.analyze(text="Zip code: 10023", language="en")
+print(results)
+```
+
+### Ad-hoc recognizers (per request)
+
+Pass recognizers inline without registering them permanently:
+
+```python
+from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+
+analyzer = AnalyzerEngine()
+
+ad_hoc = PatternRecognizer(
+    supported_entity="EMPLOYEE_ID",
+    patterns=[Pattern("employee id", r"EMP-\d{6}", 0.9)]
+)
+
+results = analyzer.analyze(
+    text="Employee EMP-123456 submitted a request.",
+    language="en",
+    ad_hoc_recognizers=[ad_hoc]
+)
+print(results)
+```
+
+### Set global regex flags
+
+```python
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+import regex as re
+
+registry = RecognizerRegistry(
+    global_regex_flags=re.DOTALL | re.MULTILINE | re.IGNORECASE
+)
+engine = AnalyzerEngine(registry=registry)
+```
+
+## `RecognizerResult` structure
+
+Every recognizer returns a list of `RecognizerResult` objects:
+
+| Field | Type | Description |
+|---|---|---|
+| `entity_type` | `str` | The detected PII entity type (e.g. `"PHONE_NUMBER"`). |
+| `start` | `int` | Start character offset in the original text. |
+| `end` | `int` | End character offset (exclusive). |
+| `score` | `float` | Confidence score between `0.0` and `1.0`. |
+| `analysis_explanation` | `AnalysisExplanation` | Present when `return_decision_process=True`. |
+| `recognition_metadata` | `dict` | Contains `recognizer_name` and `recognizer_identifier`. |

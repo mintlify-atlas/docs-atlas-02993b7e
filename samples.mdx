@@ -1,0 +1,406 @@
+---
+title: 'Samples'
+description: 'Code samples and notebooks covering common Presidio usage patterns — from basic text analysis to large-scale deployments.'
+keywords: ['samples', 'examples', 'notebooks', 'tutorial', 'anonymization', 'image redaction', 'deployment']
+---
+
+## Overview
+
+The samples directory contains Jupyter notebooks, Python scripts, and deployment templates covering the full range of Presidio capabilities. Use these as starting points for your own integration.
+
+<Note>
+  All samples are maintained in the [microsoft/presidio GitHub repository](https://github.com/microsoft/presidio/tree/main/docs/samples). Most Python notebooks can be run locally or in any hosted Jupyter environment.
+</Note>
+
+---
+
+## Text processing
+
+### Basic usage
+
+<CardGroup cols={2}>
+  <Card
+    title="Basic usage notebook"
+    icon="book-open"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/presidio_notebook.ipynb"
+  >
+    End-to-end walkthrough of Presidio Analyzer and Anonymizer: detect PII in text, inspect results, and apply anonymization operators.
+  </Card>
+  <Card
+    title="Customizing Presidio Analyzer"
+    icon="sliders"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/customizing_presidio_analyzer.ipynb"
+  >
+    Add custom recognizers, adjust confidence thresholds, and configure entity allow/deny lists.
+  </Card>
+  <Card
+    title="Configuring the NLP engine"
+    icon="cpu"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/ner_model_configuration.ipynb"
+  >
+    Configure and swap NLP backends (spaCy, Stanza, transformers) used by the Analyzer engine.
+  </Card>
+  <Card
+    title="Encrypt and decrypt identified entities"
+    icon="lock"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/encrypt_decrypt.ipynb"
+  >
+    Use Presidio's built-in encrypt/decrypt operators to reversibly anonymize PII while preserving recoverability.
+  </Card>
+  <Card
+    title="Getting entity values"
+    icon="magnifying-glass"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/getting_entity_values.ipynb"
+  >
+    Use a custom anonymization operator to capture and inspect the original detected entity values.
+  </Card>
+  <Card
+    title="Anonymizing known values"
+    icon="eye-slash"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/Anonymizing%20known%20values.ipynb"
+  >
+    Redact specific known PII values (e.g., a list of names) even when the recognizer doesn't detect them automatically.
+  </Card>
+  <Card
+    title="Keeping entities from anonymization"
+    icon="shield-check"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/keep_entities.ipynb"
+  >
+    Configure allow lists to exclude certain entities or values from being anonymized.
+  </Card>
+  <Card
+    title="YAML no-code configuration"
+    icon="file-code"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/no_code_config.ipynb"
+  >
+    Configure Presidio entirely through YAML files — no Python code required for common use cases.
+  </Card>
+</CardGroup>
+
+### Batch processing
+
+<CardGroup cols={2}>
+  <Card
+    title="Batch processing notebook"
+    icon="layer-group"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/batch_processing.ipynb"
+  >
+    Analyze and anonymize structured and semi-structured data in bulk using Presidio's batch capabilities.
+  </Card>
+  <Card
+    title="Analyze and anonymize CSV files"
+    icon="table"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/process_csv_file.py"
+  >
+    Process CSV files row-by-row and write anonymized output using Presidio Analyzer and Anonymizer.
+  </Card>
+</CardGroup>
+
+### Custom recognizers
+
+<CardGroup cols={2}>
+  <Card
+    title="Remote recognizer"
+    icon="network-wired"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/example_remote_recognizer.py"
+  >
+    Implement a recognizer that delegates detection to an external HTTP service, enabling third-party PII detection within the Presidio framework.
+  </Card>
+  <Card
+    title="Custom lambda anonymizer"
+    icon="function"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/example_custom_lambda_anonymizer.py"
+  >
+    Pass a Python lambda as an anonymization operator to apply custom replacement logic — demonstrated here with the Faker library for pseudonymization.
+  </Card>
+  <Card
+    title="Pseudonymization with mappings"
+    icon="shuffle"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/pseudonymization.ipynb"
+  >
+    Replace PII with consistent fake values using lookup mappings, preserving referential integrity across a dataset.
+  </Card>
+  <Card
+    title="Integrating with external services"
+    icon="plug"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/integrating_with_external_services.ipynb"
+  >
+    Pattern for wrapping any external PII detection API as a Presidio-compatible recognizer.
+  </Card>
+</CardGroup>
+
+### Language model integration
+
+<CardGroup cols={2}>
+  <Card
+    title="Flair NER recognizer"
+    icon="brain"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/flair_recognizer.py"
+  >
+    Use the Flair NLP library as an external NER model within Presidio for improved entity detection quality.
+  </Card>
+  <Card
+    title="Span Marker recognizer"
+    icon="tag"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/span_marker_recognizer.py"
+  >
+    Use a Span Marker model as an external PII recognizer, demonstrating how to plug in HuggingFace-compatible models.
+  </Card>
+  <Card
+    title="Transformers recognizer"
+    icon="robot"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/transformers_recognizer/index.md"
+  >
+    Use HuggingFace Transformers NER models as Presidio recognizers, with configuration examples for popular models.
+  </Card>
+  <Card
+    title="GLiNER within Presidio"
+    icon="sparkles"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/gliner.md"
+  >
+    Use GLiNER (Generalist and Lightweight Model for NER) as a zero-shot entity recognizer inside Presidio.
+  </Card>
+  <Card
+    title="Synthetic data generation with OpenAI"
+    icon="wand-magic-sparkles"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/synth_data_with_openai.ipynb"
+  >
+    Generate realistic synthetic data with PII using OpenAI models, then use Presidio to verify and anonymize it.
+  </Card>
+</CardGroup>
+
+### Azure AI integrations
+
+<CardGroup cols={2}>
+  <Card
+    title="Azure AI Language"
+    icon="microsoft"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/text_analytics/index.md"
+  >
+    Integrate Azure AI Language PII detection as a remote recognizer inside Presidio to complement built-in recognizers with cloud-backed detection.
+  </Card>
+  <Card
+    title="Azure Health Data Services"
+    icon="hospital"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/ahds/index.md"
+  >
+    Use the Azure Health Data Services de-identification service as a remote recognizer for clinical text (PHI detection).
+  </Card>
+  <Card
+    title="AHDS surrogate example"
+    icon="arrows-rotate"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/ahds/example_ahds_surrogate.py"
+  >
+    Replace detected PHI with surrogate (fake but realistic) values using Azure Health Data Services and Presidio together.
+  </Card>
+  <Card
+    title="LangExtract integration"
+    icon="link"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/langextract/index.md"
+  >
+    Use LangExtract for language model-based PII and PHI detection, integrated into the Presidio recognizer framework.
+  </Card>
+</CardGroup>
+
+### LLM and GenAI guardrails
+
+<CardGroup cols={2}>
+  <Card
+    title="LiteLLM proxy PII masking"
+    icon="shield"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/docker/litellm.md"
+  >
+    Mask PII in LLM calls across providers (Anthropic, Gemini, Bedrock, Azure OpenAI, and more) using a LiteLLM proxy with Presidio middleware.
+  </Card>
+  <Card
+    title="Data protection for OpenAI"
+    icon="key"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/openai-anonymaztion-and-deanonymaztion-best-practices/index.md"
+  >
+    Patterns and best practices for anonymizing prompts before sending to OpenAI and de-anonymizing responses afterward.
+  </Card>
+</CardGroup>
+
+---
+
+## Image redaction
+
+<CardGroup cols={2}>
+  <Card
+    title="DICOM image redaction"
+    icon="x-ray"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/example_dicom_image_redactor.ipynb"
+  >
+    Detect and redact PII from DICOM medical images, including both pixel-embedded text and DICOM metadata fields.
+  </Card>
+  <Card
+    title="Image redaction with allow list"
+    icon="image"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/image_redaction_allow_list_approach.ipynb"
+  >
+    Use an allow list to exclude specific words or patterns from being redacted when processing images with Presidio Image Redactor.
+  </Card>
+  <Card
+    title="Plot custom bounding boxes"
+    icon="vector-square"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/plot_custom_bboxes.ipynb"
+  >
+    Visualize detected PII entity bounding boxes on images for inspection and debugging before applying redaction.
+  </Card>
+  <Card
+    title="Annotate PII in a PDF"
+    icon="file-pdf"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/example_pdf_annotation.ipynb"
+  >
+    Detect and annotate PII entities in PDF documents, using Presidio's OCR pipeline for text extraction.
+  </Card>
+</CardGroup>
+
+---
+
+## Structured data
+
+<CardGroup cols={2}>
+  <Card
+    title="Presidio Structured basic usage"
+    icon="table-cells"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/example_structured.ipynb"
+  >
+    Analyze and anonymize PII in pandas DataFrames and other tabular data using Presidio Structured.
+  </Card>
+  <Card
+    title="Microsoft Fabric integration"
+    icon="database"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/fabric/index.md"
+  >
+    Run Presidio on Microsoft Fabric (Lakehouse/Spark) to process large tabular datasets at scale.
+  </Card>
+</CardGroup>
+
+---
+
+## REST API
+
+<Card
+  title="Presidio as a REST endpoint"
+  icon="server"
+  href="https://github.com/microsoft/presidio/blob/main/docs/samples/docker/index.md"
+>
+  Run Presidio Analyzer and Anonymizer as Docker containers exposing REST APIs. Includes a Postman collection for exploring the endpoints.
+</Card>
+
+---
+
+## Deployment
+
+<CardGroup cols={2}>
+  <Card
+    title="App Service deployment"
+    icon="cloud"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/app-service/index.md"
+  >
+    Deploy Presidio as an Azure App Service — suitable for teams that want a managed PaaS hosting option.
+  </Card>
+  <Card
+    title="Kubernetes deployment"
+    icon="cubes"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/k8s/index.md"
+  >
+    Deploy Presidio to a Kubernetes cluster using the provided Helm charts and manifests.
+  </Card>
+  <Card
+    title="Spark / Azure Databricks"
+    icon="bolt"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/spark/index.md"
+  >
+    Run Presidio on Apache Spark and Azure Databricks to anonymize large-scale datasets in a distributed compute environment.
+  </Card>
+  <Card
+    title="OpenTelemetry / Grafana"
+    icon="chart-line"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/redacting-telemetry/index.md"
+  >
+    Redact PII from telemetry data (traces, logs, metrics) using Presidio integrated with OpenTelemetry and Grafana.
+  </Card>
+  <Card
+    title="Azure Data Factory — small datasets"
+    icon="arrows-to-dot"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/data-factory/presidio-data-factory.md#option-1-presidio-as-an-http-rest-endpoint"
+  >
+    Build an ETL pipeline in Azure Data Factory that calls Presidio as an HTTP REST endpoint for small or medium datasets.
+  </Card>
+  <Card
+    title="Azure Data Factory — large datasets"
+    icon="database"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/data-factory/presidio-data-factory.md#option-2-presidio-on-azure-databricks"
+  >
+    Scale out PII anonymization for large datasets by combining Azure Data Factory with Presidio running on Azure Databricks.
+  </Card>
+  <Card
+    title="ADF template: HTTP service"
+    icon="puzzle-piece"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/data-factory/presidio-data-factory-template-gallery-http.md"
+  >
+    Ready-to-use Azure Data Factory pipeline template for adding Presidio as an HTTP service.
+  </Card>
+  <Card
+    title="ADF template: Databricks"
+    icon="puzzle-piece"
+    href="https://github.com/microsoft/presidio/blob/main/docs/samples/deployments/data-factory/presidio-data-factory-template-gallery-databricks.md"
+  >
+    Ready-to-use Azure Data Factory pipeline template for running Presidio on Azure Databricks.
+  </Card>
+</CardGroup>
+
+---
+
+## Presidio CLI
+
+The `presidio-cli` package provides a command-line interface for scanning files and directories for PII using Presidio Analyzer.
+
+```bash
+pip install presidio-cli
+python -m spacy download en_core_web_lg
+
+# Scan the current directory with default config
+presidio .
+
+# Scan with a specific config file
+presidio -c my_config.yaml src/
+
+# Scan a single file and output parsable JSON
+presidio -d "entities:
+  - PERSON
+  - EMAIL_ADDRESS" -f parsable myfile.py
+```
+
+The CLI uses a `.presidiocli` YAML config file (or `-c` / `-d` flags) with these options:
+
+| Option | Description |
+|---|---|
+| `language` | Language for detection (default: `en`) |
+| `entities` | List of entity types to detect (default: all) |
+| `ignore` | File/path patterns to skip (glob syntax) |
+| `allow` | Tokens that should not be flagged as PII |
+
+**Output formats**: `standard`, `github`, `colored`, `parsable`, `auto` (default)
+
+<Card
+  title="Presidio CLI on GitHub"
+  icon="terminal"
+  href="https://github.com/microsoft/presidio/tree/main/presidio-cli"
+>
+  Source code and full documentation for the Presidio command-line interface.
+</Card>
+
+---
+
+## Demo app
+
+<Card
+  title="Streamlit demo app"
+  icon="display"
+  href="https://github.com/microsoft/presidio/blob/main/docs/samples/python/streamlit/index.md"
+>
+  Build a simple interactive demo application using Streamlit to visualize Presidio's PII detection and anonymization in real time. A hosted version is available at [aka.ms/presidio-demo](https://aka.ms/presidio-demo).
+</Card>

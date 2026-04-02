@@ -1,0 +1,60 @@
+---
+title: 'Introduction'
+description: 'Presidio is an open-source SDK for PII detection and anonymization in text, images, and structured data.'
+keywords: ['presidio', 'PII', 'anonymization', 'de-identification', 'privacy']
+---
+
+Presidio is a data protection SDK developed by Microsoft. It provides fast and accurate identification and anonymization of personally identifiable information (PII) across text, images, and structured data.
+
+<Note>
+  Presidio is available as Python packages on PyPI and as Docker containers. It supports Python 3.10, 3.11, 3.12, and 3.13.
+</Note>
+
+## Modules
+
+Presidio is organized into four modules that can be used independently or combined:
+
+<CardGroup cols={2}>
+  <Card title="Analyzer" icon="magnifying-glass" href="/quickstart-text">
+    Detects PII entities in unstructured text using NLP models (spaCy, Transformers, Stanza) and rule-based recognizers. Returns entity types, spans, and confidence scores.
+  </Card>
+  <Card title="Anonymizer" icon="shield" href="/quickstart-text">
+    Anonymizes detected PII using built-in operators: replace, redact, mask, hash, encrypt, and custom lambdas. Includes a `DeanonymizeEngine` for reversible operations.
+  </Card>
+  <Card title="Image Redactor" icon="image" href="/quickstart-images">
+    Detects and redacts PII in raster images using OCR. Supports standard image formats and DICOM medical images via `ImageRedactorEngine` and `DicomImageRedactorEngine`.
+  </Card>
+  <Card title="Structured" icon="table" href="/quickstart-structured">
+    Anonymizes PII in structured and semi-structured data. Supports pandas DataFrames, JSON, and CSV via `StructuredEngine`.
+  </Card>
+</CardGroup>
+
+## How the modules work together
+
+The Analyzer and Anonymizer are the foundation. The Analyzer identifies where PII exists in text; the Anonymizer transforms it. The Image Redactor and Structured modules build on top of the Analyzer to handle their respective data types.
+
+<Steps>
+  <Step title="Analyze">
+    The `AnalyzerEngine` scans input text with a combination of NLP models and pattern-based recognizers, returning a list of `RecognizerResult` objects — each containing an entity type, character span, and confidence score.
+  </Step>
+  <Step title="Anonymize">
+    The `AnonymizerEngine` receives the original text and the analyzer results, then applies configured operators to replace, mask, hash, or encrypt each detected PII span.
+  </Step>
+  <Step title="Deanonymize (optional)">
+    For reversible operations such as encryption, the `DeanonymizeEngine` can restore the original PII values given the same key used during anonymization.
+  </Step>
+</Steps>
+
+## Quickstarts
+
+<CardGroup cols={3}>
+  <Card title="Text de-identification" icon="file-lines" href="/quickstart-text">
+    Detect and anonymize PII in plain text.
+  </Card>
+  <Card title="Image redaction" icon="image" href="/quickstart-images">
+    Redact PII from images and DICOM files.
+  </Card>
+  <Card title="Structured data" icon="table" href="/quickstart-structured">
+    Anonymize DataFrames and JSON data.
+  </Card>
+</CardGroup>

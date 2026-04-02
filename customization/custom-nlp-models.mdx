@@ -1,0 +1,343 @@
+---
+title: "Custom NLP models"
+description: "Configure Presidio Analyzer to use custom or alternative NLP backends including spaCy, HuggingFace Transformers, and Stanza."
+keywords: ["presidio", "NLP engine", "spacy", "transformers", "stanza", "custom model", "NER"]
+---
+
+Presidio uses an NLP engine for two purposes: named entity recognition (NER) to identify entities like `PERSON` and `LOCATION`, and feature extraction (tokens, lemmas, POS tags) to support rule-based recognizers and context-aware enhancement.
+
+The default engine uses spaCy's `en_core_web_lg` model. You can swap in a different spaCy model, a HuggingFace Transformers model, or a Stanza model — or run multiple models for different languages.
+
+---
+
+## Configuring the NLP engine
+
+Configuration can be done in code or via a YAML file.
+
+<Tabs>
+  <Tab title="spaCy">
+    ### Via code
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    configuration = {
+        "nlp_engine_name": "spacy",
+        "models": [
+            {"lang_code": "en", "model_name": "en_core_web_lg"},
+            {"lang_code": "es", "model_name": "es_core_news_md"},
+        ],
+    }
+
+    provider = NlpEngineProvider(nlp_configuration=configuration)
+    nlp_engine = provider.create_engine()
+
+    analyzer = AnalyzerEngine(
+        nlp_engine=nlp_engine,
+        supported_languages=["en", "es"],
+    )
+
+    results_en = analyzer.analyze(text="My name is Morris", language="en")
+    results_es = analyzer.analyze(text="Mi nombre es Morris", language="es")
+    ```
+
+    ### Via YAML
+
+    ```yaml
+    nlp_engine_name: spacy
+    models:
+      - lang_code: en
+        model_name: en_core_web_lg
+      - lang_code: es
+        model_name: es_core_news_md
+    ner_model_configuration:
+      labels_to_ignore:
+        - O
+      model_to_presidio_entity_mapping:
+        PER: PERSON
+        LOC: LOCATION
+        ORG: ORGANIZATION
+        DATE: DATE_TIME
+      low_confidence_score_multiplier: 0.4
+      low_score_entity_names:
+        - ID
+        - ORG
+    ```
+
+    Load the YAML config:
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    provider = NlpEngineProvider(conf_file="./nlp-config.yaml")
+    nlp_engine = provider.create_engine()
+
+    analyzer = AnalyzerEngine(
+        nlp_engine=nlp_engine,
+        supported_languages=["en", "es"],
+    )
+    ```
+  </Tab>
+  <Tab title="Transformers">
+    ### Via code
+
+    Each model entry needs both a spaCy model (for tokenization/lemmatization) and a HuggingFace Transformers model (for NER):
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider, TransformersNlpEngine
+
+    configuration = {
+        "nlp_engine_name": "transformers",
+        "models": [
+            {
+                "lang_code": "en",
+                "model_name": {
+                    "spacy": "en_core_web_sm",
+                    "transformers": "dslim/bert-base-NER",
+                },
+            }
+        ],
+    }
+
+    provider = NlpEngineProvider(nlp_configuration=configuration)
+    nlp_engine = provider.create_engine()
+
+    analyzer = AnalyzerEngine(
+        nlp_engine=nlp_engine,
+        supported_languages=["en"],
+    )
+    ```
+
+    ### Via YAML
+
+    ```yaml
+    nlp_engine_name: transformers
+    models:
+      - lang_code: en
+        model_name:
+          spacy: en_core_web_sm
+          transformers: dslim/bert-base-NER
+    ner_model_configuration:
+      model_to_presidio_entity_mapping:
+        PER: PERSON
+        LOC: LOCATION
+        ORG: ORGANIZATION
+        MISC: NRP
+      aggregation_strategy: max
+      stride: 14
+      alignment_mode: expand
+      low_confidence_score_multiplier: 0.4
+      low_score_entity_names:
+        - ORGANIZATION
+    ```
+
+    <Note>
+      `TransformersNlpEngine` requires the `spacy-huggingface-pipelines` package. Install it with `pip install presidio-analyzer[transformers]`.
+    </Note>
+
+    ### Recommended Transformers models
+
+    Browse token classification models at [huggingface.co/models?pipeline_tag=token-classification](https://huggingface.co/models?pipeline_tag=token-classification). Two commonly used starting points:
+
+    | Model | Notes |
+    |-------|-------|
+    | `dslim/bert-base-NER` | General NER (PER, LOC, ORG, MISC) |
+    | `obi/deid_roberta_i2b2` | Clinical/medical de-identification |
+  </Tab>
+  <Tab title="Stanza">
+    ### Via code
+
+    ```python
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    configuration = {
+        "nlp_engine_name": "stanza",
+        "models": [
+            {"lang_code": "en", "model_name": "en"},
+        ],
+    }
+
+    provider = NlpEngineProvider(nlp_configuration=configuration)
+    nlp_engine = provider.create_engine()
+
+    analyzer = AnalyzerEngine(
+        nlp_engine=nlp_engine,
+        supported_languages=["en"],
+    )
+    ```
+
+    ### Via YAML
+
+    ```yaml
+    nlp_engine_name: stanza
+    models:
+      - lang_code: en
+        model_name: en
+    ner_model_configuration:
+      model_to_presidio_entity_mapping:
+        PERSON: PERSON
+        GPE: LOCATION
+        LOC: LOCATION
+        ORG: ORGANIZATION
+        DATE: DATE_TIME
+      low_confidence_score_multiplier: 0.4
+      low_score_entity_names: []
+    ```
+
+    <Note>
+      `StanzaNlpEngine` requires the `stanza` package. Install it with `pip install presidio-analyzer[stanza]`. Stanza downloads language models on first use.
+    </Note>
+  </Tab>
+</Tabs>
+
+---
+
+## Using a custom spaCy model
+
+If you have trained or fine-tuned a spaCy model, point Presidio at it using the model path or package name.
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+configuration = {
+    "nlp_engine_name": "spacy",
+    "models": [
+        # Use an installed package name or a path to a model directory
+        {"lang_code": "en", "model_name": "/path/to/my_custom_spacy_model"},
+    ],
+}
+
+provider = NlpEngineProvider(nlp_configuration=configuration)
+nlp_engine = provider.create_engine()
+
+analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en"])
+```
+
+Presidio will load the model via `spacy.load(model_name)`. If the model is not installed as a package, pass the absolute directory path where the model was saved.
+
+---
+
+## NER model configuration
+
+The `ner_model_configuration` section (available for all engine types) controls how raw model predictions are mapped to Presidio entity types.
+
+| Field | Description |
+|-------|-------------|
+| `labels_to_ignore` | Model labels to discard entirely (e.g., `O` for non-entities). |
+| `model_to_presidio_entity_mapping` | Map model-specific labels to Presidio entity types. |
+| `default_score` | Confidence score used when the model doesn't provide one (spaCy). Default: `0.85`. |
+| `low_score_entity_names` | Entity types that should have their score multiplied down. |
+| `low_confidence_score_multiplier` | Score multiplier applied to `low_score_entity_names`. Default: `0.4`. |
+| `aggregation_strategy` | Transformers-only. How to aggregate token scores (`max`, `simple`, `first`, `average`). Default: `max`. |
+| `stride` | Transformers-only. Overlap between text chunks for long documents. Default: `14`. |
+| `alignment_mode` | Transformers-only. How token spans align to character spans (`strict`, `contract`, `expand`). Default: `expand`. |
+
+### Default entity mapping
+
+The default mapping handles common NER label sets:
+
+```python
+MODEL_TO_PRESIDIO_ENTITY_MAPPING = {
+    "PER": "PERSON",
+    "PERSON": "PERSON",
+    "LOC": "LOCATION",
+    "LOCATION": "LOCATION",
+    "GPE": "LOCATION",
+    "ORG": "ORGANIZATION",
+    "DATE": "DATE_TIME",
+    "TIME": "DATE_TIME",
+    "NORP": "NRP",
+    "AGE": "AGE",
+    "ID": "ID",
+    "EMAIL": "EMAIL",
+    "PHONE": "PHONE_NUMBER",
+    # clinical/medical labels
+    "PATIENT": "PERSON",
+    "STAFF": "PERSON",
+    "HOSP": "ORGANIZATION",
+}
+```
+
+Override this mapping in your config when using a model with different label names.
+
+---
+
+## Multiple NER models
+
+The `NlpEngine` supports one NER model per language. To combine multiple NER models for the same language, wrap additional models as `EntityRecognizer` instances and register them alongside the primary engine.
+
+```python
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+# Primary engine: spaCy for tokenization + general NER
+provider = NlpEngineProvider(nlp_configuration={
+    "nlp_engine_name": "spacy",
+    "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
+})
+nlp_engine = provider.create_engine()
+
+# Secondary model: wrap as a RemoteRecognizer or custom LocalRecognizer
+# and add it to the registry
+registry = RecognizerRegistry()
+registry.load_predefined_recognizers()
+# registry.add_recognizer(my_secondary_model_recognizer)
+
+analyzer = AnalyzerEngine(
+    nlp_engine=nlp_engine,
+    registry=registry,
+    supported_languages=["en"],
+)
+```
+
+<Tip>
+  For an example of wrapping a Flair NER model as an `EntityRecognizer`, see the [Flair recognizer sample](https://github.com/microsoft/presidio/blob/main/docs/samples/python/flair_recognizer.py).
+</Tip>
+
+---
+
+## GPU acceleration
+
+Presidio automatically detects GPU availability and enables it when possible.
+
+### CUDA (NVIDIA)
+
+GPU support is enabled via PyTorch. Set the `PRESIDIO_DEVICE` environment variable to override automatic detection:
+
+```bash
+# Force CUDA
+export PRESIDIO_DEVICE=cuda
+
+# Force a specific GPU
+export PRESIDIO_DEVICE=cuda:1
+
+# Force CPU
+export PRESIDIO_DEVICE=cpu
+```
+
+If `PRESIDIO_DEVICE` is not set, Presidio detects CUDA automatically at startup. The detection priority is:
+
+1. `PRESIDIO_DEVICE` environment variable (any valid PyTorch device string)
+2. CUDA if `torch.cuda.is_available()` returns `True`
+3. CPU as the fallback
+
+<Warning>
+  MPS (Apple Silicon / Metal) is currently not supported. Set `PRESIDIO_DEVICE=cpu` on Apple Silicon machines to avoid unexpected behavior.
+</Warning>
+
+### Required packages for GPU
+
+```bash
+# For Transformers with CUDA
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install presidio-analyzer[transformers]
+
+# For Stanza with CUDA
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install presidio-analyzer[stanza]
+```

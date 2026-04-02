@@ -1,0 +1,472 @@
+---
+title: "Image Redactor API Reference"
+description: "Full Python API reference for the presidio-image-redactor package."
+---
+
+The `presidio-image-redactor` package detects and redacts PII in images by combining OCR (Optical Character Recognition) with the Presidio Analyzer. It supports standard PIL images as well as DICOM medical images.
+
+## ImageRedactorEngine
+
+The main entry point for image redaction. Performs OCR on a PIL image, detects PII in the extracted text, and paints redaction boxes over the detected regions.
+
+```python
+from PIL import Image
+from presidio_image_redactor import ImageRedactorEngine
+
+engine = ImageRedactorEngine()
+
+image = Image.open("document.png")
+redacted_image = engine.redact(image, fill=(0, 0, 0))
+redacted_image.save("document_redacted.png")
+```
+
+### Constructor
+
+<ParamField path="image_analyzer_engine" type="ImageAnalyzerEngine" default="None">
+  An `ImageAnalyzerEngine` instance that handles OCR and PII detection. If not provided, a default `ImageAnalyzerEngine` (using Tesseract OCR and a default `AnalyzerEngine`) is created automatically.
+</ParamField>
+
+---
+
+### `redact`
+
+Redact PII in a PIL image by drawing filled rectangles over detected text regions.
+
+<Note>
+  This method duplicates the image internally — the original `Image` object is not modified.
+</Note>
+
+```python
+redacted = engine.redact(
+    image=image,
+    fill=(0, 0, 0),
+    language="en",
+    score_threshold=0.5,
+)
+```
+
+**Returns:** `PIL.Image.Image`
+
+<ParamField path="image" type="PIL.Image.Image" required>
+  The PIL image to redact. A duplicate is created internally; the original is not modified.
+</ParamField>
+
+<ParamField path="fill" type="Union[int, Tuple[int, int, int]]" default="(0, 0, 0)">
+  The color to fill redaction boxes. Use an `int` (0–255) for grayscale images or an RGB tuple (e.g. `(0, 0, 0)` for black) for color images.
+</ParamField>
+
+<ParamField path="ocr_kwargs" type="dict" default="None">
+  Additional keyword arguments passed to the OCR engine's `perform_ocr` method. Also accepts `"ocr_threshold"` (float, -1 to 100) to filter low-confidence OCR results.
+</ParamField>
+
+<ParamField path="ad_hoc_recognizers" type="List[PatternRecognizer]" default="None">
+  A list of `PatternRecognizer` objects to use only for this request, in addition to the registered recognizers. Must be `None` or a non-empty list of `PatternRecognizer` instances.
+</ParamField>
+
+<ParamField path="**text_analyzer_kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze` (e.g. `language`, `entities`, `score_threshold`, `allow_list`).
+</ParamField>
+
+---
+
+### `redact_and_return_bbox`
+
+Like `redact`, but also returns the list of bounding boxes for the detected PII regions.
+
+```python
+redacted_image, bboxes = engine.redact_and_return_bbox(
+    image=image,
+    fill=(255, 0, 0),
+    language="en",
+)
+for bbox in bboxes:
+    print(bbox.entity_type, bbox.left, bbox.top, bbox.width, bbox.height)
+```
+
+**Returns:** `Tuple[PIL.Image.Image, List[ImageRecognizerResult]]`
+
+Parameters are identical to `redact`.
+
+---
+
+## ImageAnalyzerEngine
+
+Performs OCR on an image and maps the resulting text back to pixel-level bounding boxes, then runs Presidio Analyzer on the text to detect PII. This class is used internally by `ImageRedactorEngine` but can also be used standalone.
+
+```python
+from presidio_image_redactor import ImageAnalyzerEngine
+from PIL import Image
+
+analyzer_engine = ImageAnalyzerEngine()
+image = Image.open("document.png")
+
+bboxes = analyzer_engine.analyze(image, language="en")
+for bbox in bboxes:
+    print(f"{bbox.entity_type}: [{bbox.left}, {bbox.top}, {bbox.width}, {bbox.height}]")
+```
+
+### Constructor
+
+<ParamField path="analyzer_engine" type="AnalyzerEngine" default="None">
+  A Presidio `AnalyzerEngine` instance for text-based PII detection. If not provided, a default engine is created automatically.
+</ParamField>
+
+<ParamField path="ocr" type="OCR" default="None">
+  An OCR engine instance implementing the `OCR` interface. Defaults to `TesseractOCR` if not provided.
+</ParamField>
+
+<ParamField path="image_preprocessor" type="ImagePreprocessor" default="None">
+  An `ImagePreprocessor` instance that prepares the image before OCR. Defaults to a basic `ImagePreprocessor` if not provided.
+</ParamField>
+
+---
+
+### `analyze`
+
+Run OCR on the image, then detect PII in the extracted text and map detections back to bounding boxes.
+
+```python
+bboxes = analyzer_engine.analyze(
+    image=image,
+    language="en",
+    entities=["PERSON", "PHONE_NUMBER"],
+    ocr_kwargs={"ocr_threshold": 60},
+)
+```
+
+**Returns:** `List[ImageRecognizerResult]`
+
+<ParamField path="image" type="Union[PIL.Image.Image, np.ndarray, str]" required>
+  The image to analyze. Accepts a PIL `Image`, a NumPy array, or a file path string.
+</ParamField>
+
+<ParamField path="ocr_kwargs" type="dict" default="None">
+  Additional parameters for the OCR engine. The special key `"ocr_threshold"` (float, -1 to 100) filters out low-confidence OCR words before analysis.
+</ParamField>
+
+<ParamField path="**text_analyzer_kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze` (e.g. `language`, `entities`, `score_threshold`, `allow_list`, `ad_hoc_recognizers`).
+</ParamField>
+
+---
+
+## DicomImageRedactorEngine
+
+Extends `ImageRedactorEngine` with DICOM-specific handling: grayscale/RGB pixel conversion, DICOM metadata extraction for building ad-hoc deny-list recognizers, padding for OCR, and file/directory-level batch processing.
+
+```python
+import pydicom
+from presidio_image_redactor import DicomImageRedactorEngine
+
+engine = DicomImageRedactorEngine()
+
+# Redact a loaded DICOM instance
+instance = pydicom.dcmread("scan.dcm")
+redacted = engine.redact(instance, fill="contrast")
+```
+
+### Constructor
+
+`DicomImageRedactorEngine` shares the same constructor as `ImageRedactorEngine`:
+
+<ParamField path="image_analyzer_engine" type="ImageAnalyzerEngine" default="None">
+  An `ImageAnalyzerEngine` instance. If not provided, a default one is created automatically.
+</ParamField>
+
+---
+
+### `redact`
+
+Redact PII from a loaded DICOM instance. Returns a new DICOM instance with pixel data modified.
+
+<Note>
+  This method duplicates the DICOM instance internally — the original object is not modified.
+</Note>
+
+```python
+redacted_instance = engine.redact(
+    image=instance,
+    fill="contrast",
+    padding_width=25,
+    use_metadata=True,
+    language="en",
+)
+redacted_instance.save_as("scan_redacted.dcm")
+```
+
+**Returns:** `pydicom.dataset.FileDataset`
+
+<ParamField path="image" type="pydicom.dataset.FileDataset" required>
+  A loaded DICOM instance (with pixel data) as returned by `pydicom.dcmread`.
+</ParamField>
+
+<ParamField path="fill" type="str" default='"contrast"'>
+  How to determine the color of redaction boxes:
+  - `"contrast"` — uses the inverse of the background color so boxes are clearly visible
+  - `"background"` — uses the same color as the background to make boxes blend in
+</ParamField>
+
+<ParamField path="padding_width" type="int" default="25">
+  Width in pixels of padding added to the image before running OCR. Helps OCR engines handle text near image edges. Must be between 1 and 99.
+</ParamField>
+
+<ParamField path="crop_ratio" type="float" default="0.75">
+  Fraction of the image (from corners) used to determine the background color. Must be between 0 and 1.
+</ParamField>
+
+<ParamField path="ocr_kwargs" type="dict" default="None">
+  Additional parameters for the OCR engine.
+</ParamField>
+
+<ParamField path="ad_hoc_recognizers" type="List[PatternRecognizer]" default="None">
+  Additional per-request `PatternRecognizer` objects.
+</ParamField>
+
+<ParamField path="**text_analyzer_kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze`.
+</ParamField>
+
+---
+
+### `redact_and_return_bbox`
+
+Redact a DICOM instance and return the modified instance along with the bounding boxes used for redaction.
+
+```python
+redacted_instance, bboxes = engine.redact_and_return_bbox(
+    image=instance,
+    fill="contrast",
+    use_metadata=True,
+    language="en",
+)
+print(bboxes)
+# [{"left": 10, "top": 20, "width": 80, "height": 15}, ...]
+```
+
+**Returns:** `Tuple[pydicom.dataset.FileDataset, List[Dict[str, int]]]`
+
+Parameters are identical to `redact`, plus:
+
+<ParamField path="use_metadata" type="bool" default="True">
+  Whether to extract DICOM metadata (patient name, identifiers, etc.) and create a deny-list recognizer from those values. This significantly improves recall for PHI burned into the image.
+</ParamField>
+
+---
+
+### `redact_from_file`
+
+Load a DICOM file from disk, redact it, and write the output to a directory.
+
+```python
+engine.redact_from_file(
+    input_dicom_path="/data/scans/patient_001.dcm",
+    output_dir="/data/redacted/",
+    padding_width=25,
+    fill="contrast",
+    use_metadata=True,
+    language="en",
+)
+```
+
+**Returns:** `None`
+
+<ParamField path="input_dicom_path" type="str" required>
+  Path to a single DICOM file (`.dcm` or `.dicom`). Must not be a directory.
+</ParamField>
+
+<ParamField path="output_dir" type="str" required>
+  Path to the output directory. The directory does not need to exist — it will be created.
+</ParamField>
+
+<ParamField path="padding_width" type="int" default="25">
+  Pixel padding width for OCR preprocessing.
+</ParamField>
+
+<ParamField path="crop_ratio" type="float" default="0.75">
+  Fraction of the image corners used for background color detection.
+</ParamField>
+
+<ParamField path="fill" type="str" default='"contrast"'>
+  Redaction box color strategy: `"contrast"` or `"background"`.
+</ParamField>
+
+<ParamField path="use_metadata" type="bool" default="True">
+  Whether to use DICOM metadata to build an ad-hoc deny-list recognizer.
+</ParamField>
+
+<ParamField path="save_bboxes" type="bool" default="False">
+  If `True`, saves the bounding box information as a `.json` file alongside the redacted DICOM.
+</ParamField>
+
+<ParamField path="verbose" type="bool" default="True">
+  If `True`, prints the output file path to stdout after writing.
+</ParamField>
+
+<ParamField path="ocr_kwargs" type="dict" default="None">
+  Additional parameters for the OCR engine.
+</ParamField>
+
+<ParamField path="ad_hoc_recognizers" type="List[PatternRecognizer]" default="None">
+  Additional per-request `PatternRecognizer` objects.
+</ParamField>
+
+<ParamField path="**text_analyzer_kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze`.
+</ParamField>
+
+---
+
+### `redact_from_directory`
+
+Recursively redact all DICOM files found in a directory.
+
+```python
+engine.redact_from_directory(
+    input_dicom_path="/data/scans/",
+    output_dir="/data/redacted/",
+    padding_width=25,
+    fill="contrast",
+    use_metadata=True,
+    language="en",
+)
+```
+
+**Returns:** `None`
+
+<ParamField path="input_dicom_path" type="str" required>
+  Path to a directory containing DICOM files. Subdirectories are traversed recursively. Files with `.dcm` or `.dicom` extensions are processed.
+</ParamField>
+
+<ParamField path="output_dir" type="str" required>
+  Path to the output directory. The directory structure is preserved.
+</ParamField>
+
+<ParamField path="padding_width" type="int" default="25">
+  Pixel padding width for OCR preprocessing.
+</ParamField>
+
+<ParamField path="crop_ratio" type="float" default="0.75">
+  Fraction of the image corners used for background color detection.
+</ParamField>
+
+<ParamField path="fill" type="str" default='"contrast"'>
+  Redaction box color strategy: `"contrast"` or `"background"`.
+</ParamField>
+
+<ParamField path="use_metadata" type="bool" default="True">
+  Whether to use DICOM metadata to build an ad-hoc deny-list recognizer.
+</ParamField>
+
+<ParamField path="save_bboxes" type="bool" default="False">
+  If `True`, saves bounding box information as `.json` files alongside each redacted DICOM.
+</ParamField>
+
+<ParamField path="ocr_kwargs" type="dict" default="None">
+  Additional parameters for the OCR engine.
+</ParamField>
+
+<ParamField path="ad_hoc_recognizers" type="List[PatternRecognizer]" default="None">
+  Additional per-request `PatternRecognizer` objects.
+</ParamField>
+
+<ParamField path="**text_analyzer_kwargs" type="Any">
+  Additional keyword arguments forwarded to `AnalyzerEngine.analyze`.
+</ParamField>
+
+---
+
+## TesseractOCR
+
+The default OCR engine, based on Google's Tesseract. Implements the `OCR` interface.
+
+```python
+from presidio_image_redactor import TesseractOCR, ImageAnalyzerEngine
+
+ocr = TesseractOCR()
+analyzer = ImageAnalyzerEngine(ocr=ocr)
+```
+
+`TesseractOCR` requires Tesseract to be installed on the system. It returns a dictionary with keys `"text"`, `"left"`, `"top"`, `"width"`, `"height"`, and `"conf"` corresponding to each detected word.
+
+<Warning>
+  Tesseract must be installed separately. See the [Tesseract installation guide](https://github.com/tesseract-ocr/tesseract) for your platform.
+</Warning>
+
+---
+
+## Usage Examples
+
+<Tabs>
+  <Tab title="Standard image">
+    ```python
+    from PIL import Image
+    from presidio_image_redactor import ImageRedactorEngine
+
+    engine = ImageRedactorEngine()
+    image = Image.open("invoice.png")
+
+    # Redact with black fill
+    redacted = engine.redact(image, fill=(0, 0, 0), language="en")
+    redacted.save("invoice_redacted.png")
+
+    # Redact and inspect bounding boxes
+    redacted, bboxes = engine.redact_and_return_bbox(image, fill=(0, 0, 0), language="en")
+    for bbox in bboxes:
+        print(f"{bbox.entity_type}: top={bbox.top}, left={bbox.left}")
+    ```
+  </Tab>
+  <Tab title="DICOM image">
+    ```python
+    import pydicom
+    from presidio_image_redactor import DicomImageRedactorEngine
+
+    engine = DicomImageRedactorEngine()
+
+    # Single file
+    instance = pydicom.dcmread("chest_xray.dcm")
+    redacted = engine.redact(instance, fill="contrast", use_metadata=True)
+    redacted.save_as("chest_xray_redacted.dcm")
+
+    # From file path
+    engine.redact_from_file(
+        input_dicom_path="chest_xray.dcm",
+        output_dir="./redacted/",
+        fill="contrast",
+        use_metadata=True,
+        language="en",
+    )
+
+    # Entire directory
+    engine.redact_from_directory(
+        input_dicom_path="./patient_scans/",
+        output_dir="./patient_scans_redacted/",
+        fill="contrast",
+        use_metadata=True,
+        language="en",
+    )
+    ```
+  </Tab>
+  <Tab title="Custom recognizer">
+    ```python
+    from PIL import Image
+    from presidio_analyzer import PatternRecognizer, Pattern
+    from presidio_image_redactor import ImageRedactorEngine
+
+    engine = ImageRedactorEngine()
+    image = Image.open("report.png")
+
+    mrn_recognizer = PatternRecognizer(
+        supported_entity="MRN",
+        patterns=[Pattern(name="mrn", regex=r"MRN[:\s]*\d{6,10}", score=0.9)],
+    )
+
+    redacted = engine.redact(
+        image=image,
+        fill=(0, 0, 0),
+        ad_hoc_recognizers=[mrn_recognizer],
+        language="en",
+    )
+    redacted.save("report_redacted.png")
+    ```
+  </Tab>
+</Tabs>

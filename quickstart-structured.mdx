@@ -1,0 +1,144 @@
+---
+title: 'Quickstart: structured data'
+description: 'Anonymize PII in pandas DataFrames and JSON data using presidio-structured.'
+keywords: ['presidio', 'structured', 'dataframe', 'pandas', 'JSON', 'anonymize', 'quickstart']
+---
+
+This guide covers anonymizing PII in structured and semi-structured data using the `presidio-structured` package.
+
+<Warning>
+  `presidio-structured` is currently in **alpha**. Features and APIs may change between releases.
+</Warning>
+
+## Prerequisites
+
+```bash
+pip install presidio_structured
+```
+
+`presidio-structured` requires `presidio-analyzer` and `presidio-anonymizer`. They are installed automatically as dependencies.
+
+## Anonymize a pandas DataFrame
+
+<Steps>
+  <Step title="Create a sample DataFrame">
+    ```python
+    import pandas as pd
+
+    sample_df = pd.DataFrame({
+        "name": ["John Doe", "Jane Smith"],
+        "email": ["john.doe@example.com", "jane.smith@example.com"],
+    })
+    print(sample_df)
+    ```
+  </Step>
+  <Step title="Generate a tabular analysis">
+    `PandasAnalysisBuilder.generate_analysis` scans each column in the DataFrame and identifies which PII entity types it contains.
+
+    ```python
+    from presidio_structured import StructuredEngine, PandasAnalysisBuilder
+
+    pandas_engine = StructuredEngine()
+    tabular_analysis = PandasAnalysisBuilder().generate_analysis(sample_df)
+    ```
+  </Step>
+  <Step title="Define anonymization operators">
+    Use `OperatorConfig` to specify how each entity type should be handled. Any built-in operator (`replace`, `redact`, `mask`, `hash`, `encrypt`, `custom`) is supported.
+
+    ```python
+    from presidio_anonymizer.entities import OperatorConfig
+
+    operators = {
+        "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+        "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    }
+    ```
+  </Step>
+  <Step title="Anonymize the DataFrame">
+    ```python
+    from presidio_structured import StructuredEngine, PandasAnalysisBuilder
+    from presidio_anonymizer.entities import OperatorConfig
+    import pandas as pd
+
+    # Sample data
+    sample_df = pd.DataFrame({
+        "name": ["John Doe", "Jane Smith"],
+        "email": ["john.doe@example.com", "jane.smith@example.com"],
+    })
+
+    # Initialize engine and analyze
+    pandas_engine = StructuredEngine()
+    tabular_analysis = PandasAnalysisBuilder().generate_analysis(sample_df)
+
+    # Define operators
+    operators = {
+        "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+        "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    }
+
+    # Anonymize
+    anonymized_df = pandas_engine.anonymize(sample_df, tabular_analysis, operators=operators)
+    print(anonymized_df)
+    ```
+  </Step>
+</Steps>
+
+## Anonymize with a custom function
+
+You can pass a `custom` operator with a lambda to apply arbitrary transformations, for example generating fake values using the [Faker](https://faker.readthedocs.io/) library:
+
+```python
+import pandas as pd
+from presidio_structured import StructuredEngine, PandasAnalysisBuilder
+from presidio_anonymizer.entities import OperatorConfig
+from faker import Faker
+
+fake = Faker()
+
+sample_df = pd.DataFrame({
+    "name": ["John Doe", "Jane Smith"],
+    "email": ["john.doe@example.com", "jane.smith@example.com"],
+})
+
+pandas_engine = StructuredEngine()
+tabular_analysis = PandasAnalysisBuilder().generate_analysis(sample_df)
+
+operators = {
+    "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    "EMAIL_ADDRESS": OperatorConfig("custom", {"lambda": lambda x: fake.safe_email()}),
+}
+
+anonymized_df = pandas_engine.anonymize(sample_df, tabular_analysis, operators=operators)
+print(anonymized_df)
+```
+
+## Anonymize JSON data
+
+Use `JsonAnalysisBuilder` and `JsonDataProcessor` to anonymize semi-structured JSON or Python dictionaries:
+
+```python
+from presidio_structured import StructuredEngine, JsonAnalysisBuilder
+from presidio_structured.data import JsonDataProcessor
+from presidio_anonymizer.entities import OperatorConfig
+
+sample_json = {
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+}
+
+# Initialize engine with a JSON data processor
+json_engine = StructuredEngine(data_processor=JsonDataProcessor())
+
+# Analyze the JSON structure
+json_analysis = JsonAnalysisBuilder().generate_analysis(data=sample_json)
+
+# Define operators
+operators = {
+    "PERSON": OperatorConfig("replace", {"new_value": "REDACTED"}),
+    "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "REDACTED"}),
+}
+
+# Anonymize
+anonymized_json = json_engine.anonymize(sample_json, json_analysis, operators=operators)
+print(anonymized_json)
+```

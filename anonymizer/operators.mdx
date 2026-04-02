@@ -1,0 +1,303 @@
+---
+title: 'Operators'
+description: 'Reference for all built-in anonymization operators in Presidio: replace, redact, mask, hash, encrypt, decrypt, custom, and keep.'
+keywords: ['presidio', 'anonymizer', 'operators', 'replace', 'redact', 'mask', 'hash', 'encrypt', 'decrypt', 'custom']
+---
+
+Operators are the text manipulation functions applied by `AnonymizerEngine` to each detected PII span. Presidio provides the following built-in operators:
+
+## Operators reference
+
+| Type | Operator | Description | Parameters |
+|---|---|---|---|
+| Anonymize | `replace` | Replace PII with a fixed value | `new_value` (optional) |
+| Anonymize | `redact` | Remove PII completely | None |
+| Anonymize | `mask` | Replace PII characters with a masking character | `masking_char`, `chars_to_mask`, `from_end` |
+| Anonymize | `hash` | Hash PII using a salted digest | `hash_type` (`sha256`/`sha512`), `salt` (optional) |
+| Anonymize | `encrypt` | AES-encrypt PII using a key | `key` |
+| Anonymize | `custom` | Apply a Python lambda to the PII text | `lambda` |
+| Anonymize | `keep` | Leave PII unchanged | None |
+| Anonymize | `surrogate_ahds` | Generate realistic surrogates using Azure Health Data Services | `endpoint`, `entities`, `input_locale`, `surrogate_locale` |
+| Deanonymize | `decrypt` | Decrypt previously encrypted PII | `key` |
+
+---
+
+## `replace`
+
+Replaces the PII span with a fixed string. If `new_value` is omitted, the entity type is used as the placeholder (e.g. `<PHONE_NUMBER>`).
+
+```python
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+
+engine = AnonymizerEngine()
+
+result = engine.anonymize(
+    text="My name is Bond, James Bond",
+    analyzer_results=[
+        RecognizerResult(entity_type="PERSON", start=11, end=15, score=0.8),
+        RecognizerResult(entity_type="PERSON", start=17, end=27, score=0.8),
+    ],
+    operators={"PERSON": OperatorConfig("replace", {"new_value": "BIP"})},
+)
+
+print(result.text)
+# My name is BIP, BIP.
+```
+
+When `new_value` is omitted:
+
+```python
+operators={"PERSON": OperatorConfig("replace")}
+# Result: "My name is <PERSON>, <PERSON>."
+```
+
+---
+
+## `redact`
+
+Removes the PII span entirely, leaving no placeholder.
+
+```python
+result = engine.anonymize(
+    text="Call John at 212-555-5555",
+    analyzer_results=[
+        RecognizerResult(entity_type="PHONE_NUMBER", start=13, end=25, score=0.75),
+    ],
+    operators={"PHONE_NUMBER": OperatorConfig("redact")},
+)
+
+print(result.text)
+# Call John at
+```
+
+---
+
+## `mask`
+
+Replaces a specified number of PII characters with a masking character. Use `from_end=True` to mask from the end of the string.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `masking_char` | `str` | Single character used as the mask (e.g. `"*"`). |
+| `chars_to_mask` | `int` | Number of characters to replace. |
+| `from_end` | `bool` | If `True`, masks from the end of the PII value. |
+
+```python
+result = engine.anonymize(
+    text="My credit card is 4111-1111-1111-1111",
+    analyzer_results=[
+        RecognizerResult(entity_type="CREDIT_CARD", start=18, end=37, score=1.0),
+    ],
+    operators={
+        "CREDIT_CARD": OperatorConfig("mask", {
+            "masking_char": "*",
+            "chars_to_mask": 12,
+            "from_end": False
+        })
+    },
+)
+
+print(result.text)
+# My credit card is ************1111
+```
+
+---
+
+## `hash`
+
+Hashes the PII value using a salted digest. Supported hash types: `sha256` (default) and `sha512`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `hash_type` | `str` | `"sha256"` or `"sha512"`. Default: `"sha256"`. |
+| `salt` | `str` | Optional. A secret salt for reproducible hashing. If omitted, a random salt is generated per entity. |
+
+```python
+result = engine.anonymize(
+    text="My SSN is 078-05-1120",
+    analyzer_results=[
+        RecognizerResult(entity_type="US_SSN", start=10, end=21, score=0.85),
+    ],
+    operators={"US_SSN": OperatorConfig("hash", {"hash_type": "sha256"})},
+)
+
+print(result.text)
+# My SSN is <hashed value>
+```
+
+### Referential integrity with a consistent salt
+
+<Warning>
+**Breaking change in v2.2.361:** The hash operator now uses a random salt by default. The same PII value will produce **different hashes** in different calls unless you explicitly provide a `salt` parameter.
+
+If you need the same value to hash identically across records or calls (referential integrity), you must supply a consistent `salt`.
+</Warning>
+
+```python
+import secrets
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+
+# Generate a secure salt once and store it securely for reuse
+salt = secrets.token_hex(32)  # 64-character hex string (256 bits)
+
+engine = AnonymizerEngine()
+text = "John Doe called John Doe yesterday"
+analyzer_results = [
+    RecognizerResult(start=0, end=8, score=0.8, entity_type="PERSON"),
+    RecognizerResult(start=16, end=24, score=0.8, entity_type="PERSON"),
+]
+
+# Both "John Doe" occurrences will produce the same hash
+result = engine.anonymize(
+    text,
+    analyzer_results,
+    {"DEFAULT": OperatorConfig("hash", {"salt": salt})}
+)
+
+print(result.text)
+```
+
+<Warning>
+**Security considerations for salt:**
+- Discard the salt after processing if you do not need to process additional records.
+- If you must retain the salt, store it in a secrets manager or key vault with strict access controls.
+- Use a salt of at least 128 bits (16 bytes) — enforced by the operator.
+- Never include the salt in the anonymized output.
+- Presidio does not store or manage salts. You are responsible for secure salt management.
+</Warning>
+
+---
+
+## `encrypt` and `decrypt`
+
+Encrypts the PII using AES encryption with the provided key. The encryption is reversible with the same key using the `decrypt` deanonymizer.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `key` | `str` | Cryptographic key for encryption and decryption. Must be 128, 192, or 256 bits (16, 24, or 32 bytes). |
+
+```python
+from presidio_anonymizer import AnonymizerEngine, DeanonymizeEngine
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig, OperatorResult
+
+KEY = "WmZq4t7w!z%C&F)J"
+
+# Encrypt
+anonymizer = AnonymizerEngine()
+encrypted = anonymizer.anonymize(
+    text="My name is James Bond",
+    analyzer_results=[
+        RecognizerResult(entity_type="PERSON", start=11, end=21, score=0.85)
+    ],
+    operators={"PERSON": OperatorConfig("encrypt", {"key": KEY})}
+)
+print(encrypted.text)
+# My name is S184CMt9Drj7QaKQ21JTrpYzghnboTF9pn/neN8JME0=
+
+# Decrypt
+deanonymizer = DeanonymizeEngine()
+decrypted = deanonymizer.deanonymize(
+    text=encrypted.text,
+    entities=[OperatorResult(start=11, end=55, entity_type="PERSON")],
+    operators={"DEFAULT": OperatorConfig("decrypt", {"key": KEY})}
+)
+print(decrypted.text)
+# My name is James Bond
+```
+
+---
+
+## `custom`
+
+Applies a Python lambda to the detected PII text. The lambda must accept a single string and return a string.
+
+```python
+from faker import Faker
+
+fake = Faker()
+
+result = engine.anonymize(
+    text="Contact john.doe@example.com for details",
+    analyzer_results=[
+        RecognizerResult(entity_type="EMAIL_ADDRESS", start=8, end=28, score=1.0),
+    ],
+    operators={
+        "EMAIL_ADDRESS": OperatorConfig("custom", {
+            "lambda": lambda x: fake.safe_email()
+        })
+    },
+)
+
+print(result.text)
+# Contact <random_fake_email> for details
+```
+
+---
+
+## `keep`
+
+Preserves the PII text without modification. Useful when you want to explicitly document that a particular entity type should not be anonymized.
+
+```python
+result = engine.anonymize(
+    text="The report covers the period January 2024",
+    analyzer_results=[
+        RecognizerResult(entity_type="DATE_TIME", start=30, end=42, score=0.85),
+    ],
+    operators={"DATE_TIME": OperatorConfig("keep")},
+)
+
+print(result.text)
+# The report covers the period January 2024
+```
+
+---
+
+## Creating a custom operator
+
+Extend the built-in operators by implementing the abstract `Operator` class:
+
+<Steps>
+  <Step title="Create a class implementing Operator">
+    ```python
+    from presidio_anonymizer.operators import Operator, OperatorType
+
+    class MyCustomOperator(Operator):
+        def operate(self, text: str, params: dict) -> str:
+            prefix = params.get("prefix", "ANON")
+            return f"[{prefix}]"
+
+        def validate(self, params: dict) -> None:
+            # Raise ValueError if params are invalid
+            pass
+
+        def operator_name(self) -> str:
+            return "my_custom"
+
+        def operator_type(self) -> OperatorType:
+            return OperatorType.Anonymize
+    ```
+  </Step>
+  <Step title="Register it with the engine">
+    ```python
+    from presidio_anonymizer import AnonymizerEngine
+    from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+
+    engine = AnonymizerEngine()
+    engine.add_anonymizer(MyCustomOperator)
+
+    result = engine.anonymize(
+        text="Call 555-1234",
+        analyzer_results=[
+            RecognizerResult(entity_type="PHONE_NUMBER", start=5, end=13, score=0.75)
+        ],
+        operators={"PHONE_NUMBER": OperatorConfig("my_custom", {"prefix": "PHONE"})}
+    )
+
+    print(result.text)
+    # Call [PHONE]
+    ```
+  </Step>
+</Steps>

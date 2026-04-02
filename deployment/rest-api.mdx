@@ -1,0 +1,435 @@
+---
+title: 'REST API reference'
+description: 'HTTP API reference for the Presidio analyzer, anonymizer, and image-redactor services.'
+keywords: ['rest api', 'http', 'flask', 'analyze', 'anonymize', 'redact', 'presidio-analyzer', 'presidio-anonymizer', 'presidio-image-redactor']
+---
+
+Each Presidio module exposes a Flask-based REST API when deployed as a Docker container or Kubernetes service. This page documents every endpoint, request body, and response format.
+
+<Note>
+  All examples assume the default port mapping from the [Docker deployment](/deployment/docker) guide: analyzer on `5002`, anonymizer on `5001`, and image-redactor on `5003`.
+</Note>
+
+## Analyzer API
+
+Base URL: `http://localhost:5002`
+
+### POST /analyze
+
+Analyze text for PII entities and return a list of detected results.
+
+**Request**
+
+```bash
+curl -X POST http://localhost:5002/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "His name is John Smith and his email is john@example.com",
+    "language": "en"
+  }'
+```
+
+**Request body**
+
+<ParamField body="text" type="string | array" required>
+  The text to analyze. Pass a string for a single item or an array of strings for batch analysis.
+</ParamField>
+
+<ParamField body="language" type="string" required>
+  BCP-47 language code of the input text (e.g. `"en"`, `"es"`, `"de"`).
+</ParamField>
+
+<ParamField body="entities" type="array">
+  List of entity types to detect. When omitted, all supported entities are detected. Example: `["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER"]`.
+</ParamField>
+
+<ParamField body="score_threshold" type="number">
+  Minimum confidence score (0–1) for a result to be returned. Defaults to `0` (all results).
+</ParamField>
+
+<ParamField body="return_decision_process" type="boolean">
+  When `true`, each result includes the decision process metadata used by the recognizer.
+</ParamField>
+
+<ParamField body="correlation_id" type="string">
+  Optional identifier attached to log output for request tracing.
+</ParamField>
+
+<ParamField body="ad_hoc_recognizers" type="array">
+  List of recognizer definitions added only for this request. Each item follows the `PatternRecognizer` or `EntityRecognizer` schema.
+</ParamField>
+
+<ParamField body="context" type="array">
+  List of context words that boost confidence scores for context-aware recognizers.
+</ParamField>
+
+<ParamField body="allow_list" type="array">
+  List of values that should never be flagged as PII, regardless of the recognizer result.
+</ParamField>
+
+<ParamField body="allow_list_match" type="string">
+  Match strategy for `allow_list`. Accepted values: `"exact"`, `"regex"`.
+</ParamField>
+
+<ParamField body="regex_flags" type="integer">
+  Python `re` module flags to apply to all regex-based recognizers in this request.
+</ParamField>
+
+**Response**
+
+A JSON array of `RecognizerResult` objects:
+
+```json
+[
+  {
+    "entity_type": "PERSON",
+    "start": 12,
+    "end": 22,
+    "score": 0.85
+  },
+  {
+    "entity_type": "EMAIL_ADDRESS",
+    "start": 40,
+    "end": 56,
+    "score": 1.0
+  }
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `entity_type` | string | The PII entity type detected (e.g. `PERSON`, `EMAIL_ADDRESS`). |
+| `start` | integer | Start character index of the detected span in the original text. |
+| `end` | integer | End character index (exclusive) of the detected span. |
+| `score` | number | Confidence score between 0 and 1. |
+
+---
+
+### GET /recognizers
+
+Return the list of active recognizer names, optionally filtered by language.
+
+```bash
+curl "http://localhost:5002/recognizers?language=en"
+```
+
+**Query parameters**
+
+<ParamField query="language" type="string">
+  BCP-47 language code. When omitted, recognizers for all languages are returned.
+</ParamField>
+
+**Response**
+
+```json
+["CreditCardRecognizer", "EmailRecognizer", "PhoneRecognizer", "SpacyRecognizer", ...]
+```
+
+---
+
+### GET /supportedentities
+
+Return the list of entity types the engine can detect, optionally filtered by language.
+
+```bash
+curl "http://localhost:5002/supportedentities?language=en"
+```
+
+**Query parameters**
+
+<ParamField query="language" type="string">
+  BCP-47 language code. When omitted, entities for all languages are returned.
+</ParamField>
+
+**Response**
+
+```json
+["CREDIT_CARD", "EMAIL_ADDRESS", "IBAN_CODE", "IP_ADDRESS", "LOCATION", "PERSON", "PHONE_NUMBER", ...]
+```
+
+---
+
+### GET /health
+
+Health probe. Returns a plain-text confirmation when the service is up.
+
+```bash
+curl http://localhost:5002/health
+# Presidio Analyzer service is up
+```
+
+---
+
+## Anonymizer API
+
+Base URL: `http://localhost:5001`
+
+### POST /anonymize
+
+Replace PII spans in text using a configurable anonymization operator. The request must include the analyzer results produced by `POST /analyze`.
+
+<CodeGroup>
+
+```bash replace (default)
+curl -X POST http://localhost:5001/anonymize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "His name is John Smith and his email is john@example.com",
+    "analyzer_results": [
+      {"entity_type": "PERSON",        "start": 12, "end": 22, "score": 0.85},
+      {"entity_type": "EMAIL_ADDRESS", "start": 40, "end": 56, "score": 1.0}
+    ]
+  }'
+```
+
+```bash with operators
+curl -X POST http://localhost:5001/anonymize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "His name is John Smith and his email is john@example.com",
+    "analyzer_results": [
+      {"entity_type": "PERSON",        "start": 12, "end": 22, "score": 0.85},
+      {"entity_type": "EMAIL_ADDRESS", "start": 40, "end": 56, "score": 1.0}
+    ],
+    "anonymizers": {
+      "PERSON":        {"type": "replace", "new_value": "<PERSON>"},
+      "EMAIL_ADDRESS": {"type": "mask",    "masking_char": "*", "chars_to_mask": 6, "from_end": false}
+    }
+  }'
+```
+
+</CodeGroup>
+
+**Request body**
+
+<ParamField body="text" type="string" required>
+  The original text to anonymize.
+</ParamField>
+
+<ParamField body="analyzer_results" type="array" required>
+  Array of `RecognizerResult` objects returned by `POST /analyze`. Each object must include `entity_type`, `start`, `end`, and `score`.
+</ParamField>
+
+<ParamField body="anonymizers" type="object">
+  Map of entity type to operator configuration. Keys are entity type strings (e.g. `"PERSON"`); values are operator objects. When omitted, all entities are replaced with `<ENTITY_TYPE>`.
+
+  Supported operator types: `replace`, `redact`, `mask`, `hash`, `encrypt`.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "text": "His name is <PERSON> and his email is ******@example.com",
+  "items": [
+    {
+      "operator": "replace",
+      "entity_type": "PERSON",
+      "start": 12,
+      "end": 20,
+      "text": "<PERSON>"
+    },
+    {
+      "operator": "mask",
+      "entity_type": "EMAIL_ADDRESS",
+      "start": 37,
+      "end": 55,
+      "text": "******@example.com"
+    }
+  ]
+}
+```
+
+---
+
+### POST /deanonymize
+
+Reverse a previous anonymization using the encrypted operator. Requires the anonymized text, the `items` array from the `/anonymize` response, and the corresponding deanonymizer configuration.
+
+```bash
+curl -X POST http://localhost:5001/deanonymize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "His name is <PERSON> and his email is ******@example.com",
+    "entities": [
+      {
+        "type": "PERSON",
+        "start": 12,
+        "end": 20,
+        "entity_type": "PERSON"
+      }
+    ],
+    "deanonymizers": {
+      "PERSON": {"type": "decrypt", "key": "WmZq4t7w!z%C&F)J"}
+    }
+  }'
+```
+
+**Request body**
+
+<ParamField body="text" type="string" required>
+  The anonymized text to deanonymize.
+</ParamField>
+
+<ParamField body="entities" type="array" required>
+  The `items` array from the `/anonymize` response describing the anonymized spans.
+</ParamField>
+
+<ParamField body="deanonymizers" type="object" required>
+  Map of entity type to deanonymizer operator configuration. Currently only `decrypt` is supported for reversible anonymization.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "text": "His name is John Smith and his email is john@example.com",
+  "items": [
+    {
+      "operator": "decrypt",
+      "entity_type": "PERSON",
+      "start": 12,
+      "end": 22,
+      "text": "John Smith"
+    }
+  ]
+}
+```
+
+---
+
+### GET /anonymizers
+
+Return the list of available anonymizer operator names.
+
+```bash
+curl http://localhost:5001/anonymizers
+```
+
+**Response**
+
+```json
+["hash", "mask", "redact", "replace", "encrypt", "custom"]
+```
+
+---
+
+### GET /deanonymizers
+
+Return the list of available deanonymizer operator names.
+
+```bash
+curl http://localhost:5001/deanonymizers
+```
+
+**Response**
+
+```json
+["decrypt"]
+```
+
+---
+
+### GET /health
+
+```bash
+curl http://localhost:5001/health
+# Presidio Anonymizer service is up
+```
+
+---
+
+## Image Redactor API
+
+Base URL: `http://localhost:5003`
+
+### POST /redact
+
+Redact PII from an image. Accepts either a multipart form upload or a JSON body with a base64-encoded image.
+
+<CodeGroup>
+
+```bash multipart upload
+curl -X POST http://localhost:5003/redact \
+  -F "image=@/path/to/image.png"
+```
+
+```bash base64 JSON
+curl -X POST http://localhost:5003/redact \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "<base64-encoded-image-data>",
+    "analyzer_entities": ["PERSON", "EMAIL_ADDRESS"]
+  }'
+```
+
+</CodeGroup>
+
+**Request — multipart form**
+
+<ParamField body="image" type="file" required>
+  The image file to redact. Supported formats: PNG, JPEG, TIFF, and other formats supported by Pillow. The service uses Tesseract OCR to extract text from the image before applying PII detection.
+</ParamField>
+
+<ParamField body="data" type="string">
+  JSON-encoded string containing additional parameters such as `color_fill` (default: `(0, 0, 0)` — black).
+</ParamField>
+
+**Request — JSON body**
+
+<ParamField body="image" type="string" required>
+  Base64-encoded image data.
+</ParamField>
+
+<ParamField body="analyzer_entities" type="array">
+  List of entity types to detect and redact. When omitted, all supported entities are redacted.
+</ParamField>
+
+**Response**
+
+- **Multipart upload**: Raw image bytes (`application/octet-stream`) of the redacted image in its original format.
+- **JSON body**: Base64-encoded redacted image bytes (`application/octet-stream`).
+
+<Note>
+  The multipart path applies a fixed `score_threshold` of `0.4`. To use a custom threshold, use the JSON body path and include the analyzer results from a prior `/analyze` call.
+</Note>
+
+---
+
+### GET /health
+
+```bash
+curl http://localhost:5003/health
+# Presidio Image Redactor service is up
+```
+
+---
+
+## Error codes
+
+| HTTP status | Meaning | Common causes |
+|---|---|---|
+| `400 Bad Request` | Malformed or missing request parameters. | Missing `text` or `language` in `/analyze`; invalid JSON body; using an unsupported `custom` operator type in `/anonymize`. |
+| `422 Unprocessable Entity` | Parameter validation failed. | Invalid operator configuration in `/anonymize`; missing `image` field in `/redact`. |
+| `500 Internal Server Error` | Unexpected server-side error. | NLP model not loaded; unsupported language; runtime exception inside the engine. |
+
+The response body for all errors is a JSON object:
+
+```json
+{"error": "Human-readable error description"}
+```
+
+---
+
+## Authentication
+
+<Warning>
+  The default Presidio deployment has **no authentication or authorization**. Any client that can reach the service port can call any endpoint.
+</Warning>
+
+For production deployments, add an authentication layer in front of the services:
+
+- **API gateway** — use Azure API Management, AWS API Gateway, or Kong to enforce API key or OAuth 2.0 authentication.
+- **Kubernetes Ingress** — configure `nginx.ingress.kubernetes.io/auth-*` annotations on the NGINX Ingress to require a token before requests reach the pods.
+- **Service mesh** — use Istio or Linkerd with mutual TLS (mTLS) to restrict service-to-service communication to authorized workloads.
+- **Network policy** — at minimum, apply a Kubernetes `NetworkPolicy` to restrict which pods or namespaces can reach the Presidio services.
